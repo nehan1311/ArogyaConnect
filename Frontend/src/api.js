@@ -215,6 +215,21 @@ export async function apiUpdateConsultationNotes(id, consultationNotes) {
   return handleResponse(res);
 }
 
+// ── Notifications API ────────────────────────────────────────────
+
+export async function apiGetMyNotifications({ page = 1, limit = 20, type, status } = {}) {
+  const params = new URLSearchParams({ page, limit });
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
+  const res = await get(`/notifications/my?${params.toString()}`);
+  return handleResponse(res);
+}
+
+export async function apiGetNotificationStats() {
+  const res = await get("/notifications/stats");
+  return handleResponse(res);
+}
+
 // ── Admin API ─────────────────────────────────────────────────────
 // All admin endpoints require ADMIN role JWT — the token is sent
 // automatically via the Authorization header in every request().

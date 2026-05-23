@@ -4,15 +4,26 @@ import { useAuth, useLang } from "../../App";
 import { LANGUAGES } from "../../i18n";
 import {
   apiGetMyAppointments, apiUpdateConsultationNotes, apiSetDoctorAvailability,
+  apiGetMyNotifications,
 } from "../../api";
 import {
   savePrescription, getPrescriptionsForDoctor, genId,
 } from "../../store";
+import NotificationPanel from "../../components/NotificationPanel";
 
 function TopBar({ user, t, lang, switchLang }) {
   const initials = user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2);
+  const [showNotif, setShowNotif] = useState(false);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    apiGetMyNotifications({ limit: 5 })
+      .then(d => setUnread(d.total || 0))
+      .catch(() => {});
+  }, []);
+
   return (
-    <div className="top-bar">
+    <div className="top-bar" style={{ position: "relative" }}>
       <span className="top-bar-brand">{t.appName}</span>
       <div className="top-bar-right">
         <div className="lang-toggle">
@@ -22,8 +33,23 @@ function TopBar({ user, t, lang, switchLang }) {
             </button>
           ))}
         </div>
+        <button
+          onClick={() => setShowNotif(v => !v)}
+          style={{ position: "relative", background: "none", border: "none", cursor: "pointer", fontSize: "1.2rem", padding: "0.2rem" }}
+        >
+          🔔
+          {unread > 0 && (
+            <span style={{
+              position: "absolute", top: 0, right: 0,
+              background: "#b91c1c", color: "#fff",
+              borderRadius: "999px", fontSize: "0.55rem",
+              fontWeight: 700, padding: "0 3px", minWidth: 14, textAlign: "center",
+            }}>{unread > 99 ? "99+" : unread}</span>
+          )}
+        </button>
         <div className="avatar avatar-blue">{initials}</div>
       </div>
+      {showNotif && <NotificationPanel onClose={() => setShowNotif(false)} />}
     </div>
   );
 }
