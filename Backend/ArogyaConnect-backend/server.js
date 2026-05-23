@@ -18,6 +18,7 @@ process.on("uncaughtException", (error) => {
 
 (async () => {
   await connectDB();
+  require("./src/services/schedulerService");
 
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT} in ${NODE_ENV} mode`);

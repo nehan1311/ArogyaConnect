@@ -19,7 +19,9 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.19.1",
     "morgan": "^1.10.1",
-    "nodemailer": "^7.0.13"
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.13",
+    "twilio": "^5.13.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
