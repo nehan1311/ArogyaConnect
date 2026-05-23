@@ -144,7 +144,7 @@ function openConsultationWindow() {
   return window.open("", "_blank", "noopener,noreferrer");
 }
 
-function openDailyRoom(popup, finalUrl) {
+function openVideoRoom(popup, finalUrl) {
   if (popup && !popup.closed) {
     popup.location.href = finalUrl;
     return;
@@ -161,7 +161,7 @@ function getVideoErrorMessage(error, fallback) {
   if (
     error?.status === 502 ||
     error?.message?.includes("ECONNREFUSED") ||
-    error?.message?.includes("Daily.co")
+    error?.message?.includes("Jitsi")
   ) {
     return "The video service is unavailable right now. Please try again shortly.";
   }
@@ -211,13 +211,13 @@ export function DoctorVideoCard({ appointment, onRefresh }) {
     try {
       popup = openConsultationWindow();
       const data = await videoService.createRoom(appointmentId);
-      const finalUrl = `${data.roomUrl}?t=${data.doctorToken}`;
+      const finalUrl = data.roomUrl;
 
-      openDailyRoom(popup, finalUrl);
+      openVideoRoom(popup, finalUrl);
       setSession((current) => ({
         ...current,
         appointment: appointmentId,
-        dailyRoomUrl: data.roomUrl,
+        roomUrl: data.roomUrl,
         status: "CREATED",
       }));
       onRefresh?.();
@@ -247,12 +247,12 @@ export function DoctorVideoCard({ appointment, onRefresh }) {
     try {
       popup = openConsultationWindow();
       const data = await videoService.joinRoom(appointmentId);
-      const finalUrl = `${data.roomUrl}?t=${data.token}`;
+      const finalUrl = data.roomUrl;
 
-      openDailyRoom(popup, finalUrl);
+      openVideoRoom(popup, finalUrl);
       setSession((current) => ({
         ...current,
-        dailyRoomUrl: data.roomUrl,
+        roomUrl: data.roomUrl,
         status: data.status || "ACTIVE",
       }));
       onRefresh?.();
@@ -399,12 +399,12 @@ export function PatientVideoCard({ appointment, onRefresh }) {
     try {
       popup = openConsultationWindow();
       const data = await videoService.joinRoom(appointmentId);
-      const finalUrl = `${data.roomUrl}?t=${data.token}`;
+      const finalUrl = data.roomUrl;
 
-      openDailyRoom(popup, finalUrl);
+      openVideoRoom(popup, finalUrl);
       setSession((current) => ({
         ...current,
-        dailyRoomUrl: data.roomUrl,
+        roomUrl: data.roomUrl,
         status: data.status || "ACTIVE",
       }));
       onRefresh?.();

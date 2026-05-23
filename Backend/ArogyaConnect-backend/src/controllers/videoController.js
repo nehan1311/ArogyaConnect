@@ -1,4 +1,3 @@
-const User = require("../models/User");
 const videoService = require("../services/videoService");
 
 const createError = (message, statusCode) => {
@@ -12,19 +11,17 @@ const createRoom = async (req, res) => {
   const { appointmentId } = req.body;
   if (!appointmentId) throw createError("appointmentId is required", 400);
 
-  const { videoSession, roomUrl, roomName, doctorToken, patientToken } =
+  const { videoSession, roomUrl, roomName } =
     await videoService.createVideoRoom({ appointmentId, doctorId: req.user.id });
 
   res.status(201).json({
     success: true,
-    message: "Video room ready. Share the room URL with your patient.",
+    message: "Jitsi consultation room ready.",
     roomUrl,
     roomName,
-    doctorToken,
-    patientToken,
     sessionId: videoSession._id,
-    instructions:
-      "Doctor: use doctorToken. Patient: use patientToken. Both open roomUrl.",
+    provider: "JITSI",
+    instructions: "Doctor and patient can both open roomUrl to join the call.",
   });
 };
 
@@ -33,25 +30,21 @@ const joinRoom = async (req, res) => {
   const { appointmentId } = req.body;
   if (!appointmentId) throw createError("appointmentId is required", 400);
 
-  const user = await User.findById(req.user.id).select("name role");
-  const userName = user.role === "DOCTOR" ? "Dr. " + user.name : user.name;
-
-  const { token, roomUrl, roomName, sessionId, status } =
+  const { roomUrl, roomName, sessionId, status } =
     await videoService.joinVideoRoom({
       appointmentId,
       userId: req.user.id,
       userRole: req.user.role,
-      userName,
     });
 
   res.status(200).json({
     success: true,
-    token,
     roomUrl,
     roomName,
     sessionId,
     status,
-    message: "Open roomUrl in browser with this token to join the video call.",
+    provider: "JITSI",
+    message: "Open roomUrl in the browser to join the video call.",
   });
 };
 
