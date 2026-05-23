@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useLang } from "../../App";
 import { LANGUAGES } from "../../i18n";
 import {
-  getVerifiedDoctors, getAppointmentsForPatient, saveAppointment,
+  apiSearchDoctors, apiGetDoctorSlots, apiBookAppointment,
+  apiGetMyAppointments, apiCancelAppointment,
+} from "../../api";
+import {
   getEHRForPatient, getPrescriptionsForPatient, getTriageForPatient,
   saveTriageReport, getReportsForPatient, saveReport, genId,
 } from "../../store";
@@ -43,10 +46,17 @@ function TopBar({ user, t, lang, switchLang }) {
 }
 
 function HomeTab({ user, t, setTab }) {
-  const appts = getAppointmentsForPatient(user.id);
-  const upcoming = appts.filter(a => a.status !== "Completed");
-  const triage = getTriageForPatient(user.id);
+  const [appointments, setAppointments] = useState([]);
+  const [triageCount, setTriageCount] = useState(0);
   const firstName = user.name.split(" ")[0];
+
+  useEffect(() => {
+    apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
+    setTriageCount(getTriageForPatient(user.id).length);
+  }, [user.id]);
+
+  const upcoming = appointments.filter(a => a.status !== "COMPLETED" && a.status !== "CANCELLED");
+
   return (
     <div className="page-content">
       <div style={{ marginBottom:"1rem" }}>
@@ -63,7 +73,7 @@ function HomeTab({ user, t, setTab }) {
         </div>
         <div className="stat-card">
           <div className="stat-icon stat-icon-purple">📊</div>
-          <div className="stat-value">{triage.length}</div>
+          <div className="stat-value">{triageCount}</div>
           <div className="stat-label">{t.triageReports}</div>
         </div>
       </div>
@@ -93,11 +103,11 @@ function HomeTab({ user, t, setTab }) {
             <div className="empty-state-sub">{t.tapBookToSchedule}</div>
           </div>
         ) : upcoming.slice(0,3).map(a => (
-          <div className="list-item" key={a.id}>
-            <div className="list-avatar">{(a.doctorName||"D")[0]}</div>
+          <div className="list-item" key={a._id}>
+            <div className="list-avatar">{(a.doctor?.name||"D")[0]}</div>
             <div className="list-body">
-              <div className="list-title">{a.doctorName}</div>
-              <div className="list-sub">{a.specialization} · {a.date} {a.time}</div>
+              <div className="list-title">{a.doctor?.name}</div>
+              <div className="list-sub">{a.doctor?.profile?.specialization} · {new Date(a.date).toLocaleDateString("en-IN")} {a.startTime}</div>
             </div>
             <span className="badge badge-green">{a.status}</span>
           </div>
@@ -209,83 +219,181 @@ function TriageTab({ user, t, lang }) {
 
 function BookTab({ user, t }) {
   const [search, setSearch] = useState("");
+  const [doctors, setDoctors] = useState([]);
+  const [loadingDoctors, setLoadingDoctors] = useState(false);
   const [selected, setSelected] = useState(null);
-  const [slot, setSlot] = useState("");
   const [date, setDate] = useState("");
-  const [booked, setBooked] = useState(false);
-  const doctors = getVerifiedDoctors();
-  const filtered = doctors.filter(d =>
-    d.name.toLowerCase().includes(search.toLowerCase()) ||
-    (d.specialization||"").toLowerCase().includes(search.toLowerCase())
-  );
-  const SLOTS = ["9:00 AM","10:00 AM","11:00 AM","2:00 PM","3:00 PM","4:00 PM"];
-  const handleBook = () => {
-    if (!slot || !date) return;
-    saveAppointment({ id:genId(), patientId:user.id, patientName:user.name, doctorId:selected.id, doctorName:selected.name, specialization:selected.specialization, date, time:slot, status:"Confirmed", bookedAt:new Date().toISOString() });
-    setBooked(true);
+  const [slots, setSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slot, setSlot] = useState("");
+  const [notes, setNotes] = useState("");
+  const [booking, setBooking] = useState(false);
+  const [booked, setBooked] = useState(null);
+  const [error, setError] = useState("");
+
+  const searchDoctors = useCallback(async () => {
+    setLoadingDoctors(true);
+    setError("");
+    try {
+      const data = await apiSearchDoctors({ name: search, specialization: search });
+      setDoctors(data.doctors || []);
+    } catch (err) {
+      setError(err.message || "Failed to load doctors.");
+    } finally {
+      setLoadingDoctors(false);
+    }
+  }, [search]);
+
+  useEffect(() => { searchDoctors(); }, []);
+
+  const fetchSlots = useCallback(async (doctorId, selectedDate) => {
+    if (!doctorId || !selectedDate) return;
+    setLoadingSlots(true);
+    setSlots([]);
+    setSlot("");
+    try {
+      const data = await apiGetDoctorSlots(doctorId, selectedDate);
+      setSlots(data.slots || []);
+    } catch {
+      setSlots([]);
+    } finally {
+      setLoadingSlots(false);
+    }
+  }, []);
+
+  const handleSelectDoctor = (doc) => {
+    setSelected(doc);
+    setSlot("");
+    setSlots([]);
+    setDate("");
+    setError("");
   };
+
+  const handleDateChange = (e) => {
+    setDate(e.target.value);
+    if (selected) fetchSlots(selected.id, e.target.value);
+  };
+
+  const handleBook = async () => {
+    if (!slot || !date || !notes.trim()) {
+      setError("Please select a slot and add a reason for visit.");
+      return;
+    }
+    setBooking(true);
+    setError("");
+    try {
+      const data = await apiBookAppointment({
+        doctorId: selected.id,
+        date,
+        startTime: slot.startTime,
+        notes: notes.trim(),
+      });
+      setBooked(data.appointment);
+    } catch (err) {
+      setError(err.message || "Booking failed.");
+    } finally {
+      setBooking(false);
+    }
+  };
+
   if (booked) return (
     <div className="page-content">
       <div className="success-screen">
         <div className="success-icon">✓</div>
         <div className="success-title">{t.appointmentConfirmed}</div>
         <div className="success-sub">
-          {selected?.name}<br/>{date} · {slot}<br/>{t.appointmentConfirmedDesc}
+          {booked.doctor?.name}<br/>
+          {new Date(booked.date).toLocaleDateString("en-IN")} · {booked.startTime} – {booked.endTime}<br/>
+          {t.appointmentConfirmedDesc}
         </div>
         <button className="btn btn-primary btn-full mt-4"
-          onClick={() => { setBooked(false); setSelected(null); setSlot(""); setDate(""); }}>
+          onClick={() => { setBooked(null); setSelected(null); setSlot(""); setDate(""); setNotes(""); }}>
           {t.bookAnother}
         </button>
       </div>
     </div>
   );
+
   return (
     <div className="page-content">
       <div className="page-header">
         <div className="page-title">{t.bookAppointmentTitle}</div>
         <div className="page-desc">{t.findSpecialist}</div>
       </div>
-      <div className="form-group">
+      {error && <div className="alert alert-danger">{error}</div>}
+      <div className="form-group" style={{ display:"flex", gap:"0.5rem" }}>
         <input className="form-input" placeholder={t.searchDoctorPlaceholder}
-          value={search} onChange={e => setSearch(e.target.value)} />
+          value={search} onChange={e => setSearch(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && searchDoctors()} />
+        <button className="btn btn-primary btn-sm" onClick={searchDoctors} disabled={loadingDoctors}>
+          {loadingDoctors ? "⏳" : "🔍"}
+        </button>
       </div>
-      {doctors.length === 0 && (
+
+      {doctors.length === 0 && !loadingDoctors && (
         <div className="empty-state">
           <div className="empty-state-icon">👨‍⚕️</div>
           <div className="empty-state-text">{t.noVerifiedDoctors}</div>
           <div className="empty-state-sub">{t.doctorsAppearedOnceApproved}</div>
         </div>
       )}
-      {filtered.map(doc => (
-        <div key={doc.id} className={`doctor-card ${selected?.id===doc.id?"selected":""}`}
-          onClick={() => { setSelected(doc); setSlot(""); }}>
+
+      {doctors.map(doc => (
+        <div key={doc.id} className={`doctor-card ${selected?.id === doc.id ? "selected" : ""}`}
+          onClick={() => handleSelectDoctor(doc)}>
           <div style={{ display:"flex", alignItems:"center", gap:"0.7rem" }}>
             <div className="list-avatar">{(doc.name.split(" ").pop()||"D")[0]}</div>
             <div className="list-body">
               <div className="list-title">{doc.name}</div>
-              <div className="list-sub">{doc.specialization}{doc.experience?` · ${doc.experience} ${t.yrsExp}`:""}</div>
+              <div className="list-sub">{doc.profile?.specialization}</div>
             </div>
           </div>
-          {selected?.id===doc.id && (
-            <div style={{ marginTop:"0.85rem" }}>
+
+          {selected?.id === doc.id && (
+            <div style={{ marginTop:"0.85rem" }} onClick={e => e.stopPropagation()}>
               <div className="form-group">
                 <label className="form-label">{t.selectDate}</label>
                 <input type="date" className="form-input" value={date}
-                  onChange={e => setDate(e.target.value)} min={new Date().toISOString().split("T")[0]} />
+                  onChange={handleDateChange}
+                  min={new Date().toISOString().split("T")[0]} />
               </div>
-              <div style={{ fontSize:"0.72rem", fontWeight:700, color:"#374151", textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:"0.4rem" }}>
-                {t.availableSlots}
-              </div>
-              <div className="slot-grid">
-                {SLOTS.map(s => (
-                  <div key={s} className={`slot-chip ${slot===s?"selected":""}`}
-                    onClick={e => { e.stopPropagation(); setSlot(s); }}>{s}</div>
-                ))}
-              </div>
+
+              {loadingSlots && <div style={{ fontSize:"0.78rem", color:"#64748b" }}>⏳ Loading slots…</div>}
+
+              {!loadingSlots && date && slots.length === 0 && (
+                <div className="alert alert-warning" style={{ fontSize:"0.78rem" }}>No available slots for this date.</div>
+              )}
+
+              {slots.length > 0 && (
+                <>
+                  <div style={{ fontSize:"0.72rem", fontWeight:700, color:"#374151", textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:"0.4rem" }}>
+                    {t.availableSlots}
+                  </div>
+                  <div className="slot-grid">
+                    {slots.map(s => (
+                      <div key={s.startTime}
+                        className={`slot-chip ${slot?.startTime === s.startTime ? "selected" : ""}`}
+                        onClick={() => setSlot(s)}>
+                        {s.startTime}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {slot && (
+                <div className="form-group mt-3">
+                  <label className="form-label">Reason for visit *</label>
+                  <textarea className="form-textarea" style={{ minHeight:70 }}
+                    placeholder="Describe your symptoms or reason…"
+                    value={notes} onChange={e => setNotes(e.target.value)} />
+                </div>
+              )}
+
               {slot && date && (
-                <button className="btn btn-success btn-full mt-3"
-                  onClick={e => { e.stopPropagation(); handleBook(); }}>
-                  {t.confirmBooking} — {date} {slot}
+                <button className="btn btn-success btn-full mt-2"
+                  onClick={handleBook} disabled={booking || !notes.trim()}>
+                  {booking ? "⏳ Booking…" : `${t.confirmBooking} — ${date} ${slot.startTime}`}
                 </button>
               )}
             </div>
@@ -297,33 +405,79 @@ function BookTab({ user, t }) {
 }
 
 function AppointmentsTab({ user, t }) {
-  const appts = getAppointmentsForPatient(user.id);
+  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [cancellingId, setCancellingId] = useState(null);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiGetMyAppointments();
+      setAppointments(data.appointments || []);
+    } catch (err) {
+      setError(err.message || "Failed to load appointments.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCancel = async (id) => {
+    setCancellingId(id);
+    try {
+      await apiCancelAppointment(id, "Cancelled by patient");
+      setAppointments(prev => prev.map(a => a._id === id ? { ...a, status: "CANCELLED" } : a));
+    } catch (err) {
+      setError(err.message || "Cancel failed.");
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const statusBadge = (s) => {
+    const map = { CONFIRMED:"badge-green", COMPLETED:"badge-gray", CANCELLED:"badge-red", IN_PROGRESS:"badge-blue", REQUESTED:"badge-yellow" };
+    return map[s] || "badge-gray";
+  };
+
   return (
     <div className="page-content">
       <div className="page-header">
         <div className="page-title">{t.myAppointments}</div>
         <div className="page-desc">{t.allConsultations}</div>
       </div>
-      {appts.length === 0 ? (
+      {error && <div className="alert alert-danger">{error}</div>}
+      {loading ? (
+        <div className="empty-state"><div style={{ fontSize:"1.5rem" }}>⏳</div></div>
+      ) : appointments.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📅</div>
           <div className="empty-state-text">{t.noAppointmentsYet}</div>
           <div className="empty-state-sub">{t.bookFirstConsultation}</div>
         </div>
-      ) : [...appts].reverse().map(a => (
-        <div className="card" key={a.id} style={{ marginBottom:"0.5rem" }}>
+      ) : appointments.map(a => (
+        <div className="card" key={a._id} style={{ marginBottom:"0.5rem" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
             <div>
-              <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.9rem" }}>{a.doctorName}</div>
-              <div style={{ fontSize:"0.75rem", color:"#64748b", marginTop:"0.2rem" }}>{a.specialization}</div>
-              <div style={{ fontSize:"0.75rem", color:"#64748b" }}>{a.date} · {a.time}</div>
+              <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.9rem" }}>{a.doctor?.name}</div>
+              <div style={{ fontSize:"0.75rem", color:"#64748b", marginTop:"0.2rem" }}>{a.doctor?.profile?.specialization}</div>
+              <div style={{ fontSize:"0.75rem", color:"#64748b" }}>
+                {new Date(a.date).toLocaleDateString("en-IN")} · {a.startTime} – {a.endTime}
+              </div>
+              {a.notes && <div style={{ fontSize:"0.72rem", color:"#94a3b8", marginTop:"0.2rem" }}>Note: {a.notes}</div>}
             </div>
-            <span className={`badge ${a.status==="Confirmed"?"badge-green":a.status==="Completed"?"badge-gray":"badge-yellow"}`}>
-              {a.status}
-            </span>
+            <span className={`badge ${statusBadge(a.status)}`}>{a.status}</span>
           </div>
-          {a.status==="Confirmed" && (
-            <button className="btn btn-primary btn-sm mt-3 btn-full">{t.joinConsultationBtn}</button>
+          {(a.status === "CONFIRMED" || a.status === "REQUESTED") && (
+            <div style={{ display:"flex", gap:"0.5rem", marginTop:"0.75rem" }}>
+              <button className="btn btn-primary btn-sm btn-full">{t.joinConsultationBtn}</button>
+              <button className="btn btn-ghost btn-sm" style={{ color:"#b91c1c", flexShrink:0 }}
+                disabled={cancellingId === a._id}
+                onClick={() => handleCancel(a._id)}>
+                {cancellingId === a._id ? "⏳" : "Cancel"}
+              </button>
+            </div>
           )}
         </div>
       ))}
@@ -438,8 +592,13 @@ function RecordsTab({ user, t }) {
 
 function VideoTab({ user, t }) {
   const [joined, setJoined] = useState(false);
-  const appts = getAppointmentsForPatient(user.id).filter(a => a.status==="Confirmed");
-  if (appts.length===0) return (
+  const [appointments, setAppointments] = useState([]);
+
+  useEffect(() => {
+    apiGetMyAppointments("CONFIRMED").then(d => setAppointments(d.appointments || [])).catch(() => {});
+  }, []);
+
+  if (appointments.length === 0) return (
     <div className="page-content">
       <div className="page-header"><div className="page-title">{t.videoConsultation}</div></div>
       <div className="empty-state" style={{ marginTop:"2rem" }}>
@@ -449,14 +608,16 @@ function VideoTab({ user, t }) {
       </div>
     </div>
   );
-  const appt = appts[0];
+  const appt = appointments[0];
   return (
     <div className="page-content">
       <div className="page-header"><div className="page-title">{t.videoConsultation}</div></div>
       {!joined ? (
         <div className="card" style={{ textAlign:"center", padding:"1.5rem 1rem" }}>
-          <div style={{ fontWeight:700, fontSize:"0.95rem", marginBottom:"0.25rem" }}>{appt.doctorName}</div>
-          <div style={{ fontSize:"0.78rem", color:"#64748b", marginBottom:"1rem" }}>{appt.date} · {appt.time}</div>
+          <div style={{ fontWeight:700, fontSize:"0.95rem", marginBottom:"0.25rem" }}>{appt.doctor?.name}</div>
+          <div style={{ fontSize:"0.78rem", color:"#64748b", marginBottom:"1rem" }}>
+            {new Date(appt.date).toLocaleDateString("en-IN")} · {appt.startTime}
+          </div>
           <div className="alert alert-info" style={{ textAlign:"left", fontSize:"0.75rem" }}>{t.encryptedSession}</div>
           <button className="btn btn-primary btn-full mt-3" onClick={() => setJoined(true)}>{t.joinNow}</button>
         </div>
@@ -464,7 +625,7 @@ function VideoTab({ user, t }) {
         <div className="card">
           <div style={{ background:"#0f172a", borderRadius:"0.6rem", height:240, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:"0.9rem" }}>
             <div style={{ textAlign:"center", color:"#fff" }}>
-              <div style={{ fontWeight:600, fontSize:"0.9rem" }}>{appt.doctorName}</div>
+              <div style={{ fontWeight:600, fontSize:"0.9rem" }}>{appt.doctor?.name}</div>
               <div style={{ fontSize:"0.72rem", color:"#94a3b8", marginTop:"0.25rem" }}>Connected · WebRTC</div>
             </div>
           </div>

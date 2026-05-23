@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useLang } from "../../App";
 import { LANGUAGES } from "../../i18n";
 import {
-  getAppointmentsForDoctor, updateAppointment, saveEHREntry,
-  savePrescription, getPrescriptionsForDoctor, getUsers,
-  getEHRForPatient, getReportsForPatient, genId,
+  apiGetMyAppointments, apiUpdateConsultationNotes, apiSetDoctorAvailability,
+} from "../../api";
+import {
+  savePrescription, getPrescriptionsForDoctor, genId,
 } from "../../store";
 
 function TopBar({ user, t, lang, switchLang }) {
@@ -28,16 +29,22 @@ function TopBar({ user, t, lang, switchLang }) {
 }
 
 function HomeTab({ user, t, setTab }) {
-  const appts = getAppointmentsForDoctor(user.id);
-  const today = new Date().toISOString().split("T")[0];
-  const todayCount = appts.filter(a => a.date===today).length;
-  const upcoming = appts.filter(a => a.status==="Confirmed");
+  const [appointments, setAppointments] = useState([]);
   const rxCount = getPrescriptionsForDoctor(user.id).length;
+
+  useEffect(() => {
+    apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
+  }, []);
+
+  const today = new Date().toISOString().split("T")[0];
+  const todayCount = appointments.filter(a => new Date(a.date).toISOString().split("T")[0] === today).length;
+  const upcoming = appointments.filter(a => a.status === "CONFIRMED");
+
   return (
     <div className="page-content">
       <div style={{ marginBottom:"1rem" }}>
         <div style={{ fontWeight:800, fontSize:"1.05rem", color:"#1e293b" }}>{t.welcomeBack}, {user.name.split(" ").slice(0,2).join(" ")}</div>
-        <div style={{ fontSize:"0.78rem", color:"#64748b" }}>{user.specialization}</div>
+        <div style={{ fontSize:"0.78rem", color:"#64748b" }}>{user.profile?.specialization || user.specialization}</div>
       </div>
       <div className="stat-row">
         <div className="stat-card">
@@ -57,7 +64,7 @@ function HomeTab({ user, t, setTab }) {
           { icon:"📅", label:t.viewSchedule,      tab:"appointments"  },
           { icon:"💊", label:t.writePrescription,  tab:"prescriptions" },
           { icon:"👥", label:t.myPatients,         tab:"patients"      },
-          { icon:"📁", label:t.patientRecords,     tab:"patients"      },
+          { icon:"⏰",  label:"Set Availability",   tab:"availability"  },
         ].map(q => (
           <button key={q.tab+q.label} className="quick-btn" onClick={() => setTab(q.tab)}>
             <span className="quick-btn-icon">{q.icon}</span>
@@ -70,17 +77,17 @@ function HomeTab({ user, t, setTab }) {
         <span className="text-blue text-sm cursor-pointer" onClick={() => setTab("appointments")}>{t.seeAll}</span>
       </div>
       <div className="card">
-        {upcoming.length===0 ? (
+        {upcoming.length === 0 ? (
           <div className="empty-state" style={{ padding:"1.25rem" }}>
             <div className="empty-state-icon">📅</div>
             <div className="empty-state-text">{t.noUpcomingApptDoctor}</div>
           </div>
         ) : upcoming.slice(0,3).map(a => (
-          <div className="list-item" key={a.id}>
-            <div className="list-avatar list-avatar-green">{(a.patientName||"P")[0]}</div>
+          <div className="list-item" key={a._id}>
+            <div className="list-avatar list-avatar-green">{(a.patient?.name||"P")[0]}</div>
             <div className="list-body">
-              <div className="list-title">{a.patientName}</div>
-              <div className="list-sub">{a.date} · {a.time}</div>
+              <div className="list-title">{a.patient?.name}</div>
+              <div className="list-sub">{new Date(a.date).toLocaleDateString("en-IN")} · {a.startTime}</div>
             </div>
             <span className="badge badge-green">Confirmed</span>
           </div>
@@ -91,58 +98,87 @@ function HomeTab({ user, t, setTab }) {
 }
 
 function AppointmentsTab({ user, t }) {
-  const [appts, setAppts] = useState(() => getAppointmentsForDoctor(user.id));
+  const [appts, setAppts] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [active, setActive] = useState(null);
   const [notes, setNotes] = useState("");
-  const refresh = () => setAppts(getAppointmentsForDoctor(user.id));
-  const endCall = () => {
-    if (notes.trim()) saveEHREntry({ id:genId(), patientId:active.patientId, patientName:active.patientName, doctorId:user.id, doctorName:user.name, diagnosis:"Consultation Notes", notes:notes.trim(), date:new Date().toLocaleDateString("en-IN") });
-    updateAppointment(active.id, { status:"Completed" });
-    refresh(); setActive(null); setNotes("");
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiGetMyAppointments();
+      setAppts(data.appointments || []);
+    } catch {}
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const endCall = async () => {
+    if (!notes.trim()) { setActive(null); return; }
+    setSaving(true);
+    try {
+      await apiUpdateConsultationNotes(active._id, notes.trim());
+      await load();
+    } catch {}
+    finally { setSaving(false); setActive(null); setNotes(""); }
   };
+
   if (active) return (
     <div className="page-content">
       <div className="page-header"><div className="page-title">{t.inConsultation}</div></div>
       <div style={{ background:"#0f172a", borderRadius:"0.6rem", height:210, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:"0.9rem" }}>
         <div style={{ textAlign:"center", color:"#fff" }}>
-          <div style={{ fontWeight:600, fontSize:"0.9rem" }}>{active.patientName}</div>
+          <div style={{ fontWeight:600, fontSize:"0.9rem" }}>{active.patient?.name}</div>
           <div style={{ fontSize:"0.72rem", color:"#94a3b8", marginTop:"0.25rem" }}>Connected · WebRTC</div>
         </div>
       </div>
       <div style={{ display:"flex", gap:"0.5rem", justifyContent:"center", marginBottom:"0.9rem" }}>
         <button className="btn btn-ghost btn-sm">{t.mute}</button>
         <button className="btn btn-ghost btn-sm">{t.camera}</button>
-        <button className="btn btn-danger btn-sm" onClick={endCall}>{t.endAndSave}</button>
+        <button className="btn btn-danger btn-sm" onClick={endCall} disabled={saving}>
+          {saving ? "⏳" : t.endAndSave}
+        </button>
       </div>
       <div className="card">
         <div style={{ fontWeight:700, fontSize:"0.88rem", marginBottom:"0.5rem" }}>{t.clinicalNotes}</div>
-        <textarea className="form-textarea" style={{ minHeight:110 }} placeholder={t.clinicalNotesPlaceholder} value={notes} onChange={e => setNotes(e.target.value)} />
+        <textarea className="form-textarea" style={{ minHeight:110 }}
+          placeholder={t.clinicalNotesPlaceholder} value={notes} onChange={e => setNotes(e.target.value)} />
         <div className="alert alert-info mt-2" style={{ fontSize:"0.72rem" }}>{t.notesAutoSave}</div>
       </div>
     </div>
   );
+
   return (
     <div className="page-content">
       <div className="page-header">
         <div className="page-title">{t.schedule}</div>
         <div className="page-desc">{t.allConsultations}</div>
       </div>
-      {appts.length===0 ? (
+      {loading ? <div className="empty-state"><div style={{ fontSize:"1.5rem" }}>⏳</div></div>
+      : appts.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">📅</div>
           <div className="empty-state-text">{t.noAppointmentsYet}</div>
         </div>
-      ) : [...appts].reverse().map(a => (
-        <div className="card" key={a.id} style={{ marginBottom:"0.5rem" }}>
+      ) : appts.map(a => (
+        <div className="card" key={a._id} style={{ marginBottom:"0.5rem" }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
             <div>
-              <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.9rem" }}>{a.patientName}</div>
-              <div style={{ fontSize:"0.72rem", color:"#64748b", marginTop:"0.2rem" }}>{a.date} · {a.time}</div>
+              <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.9rem" }}>{a.patient?.name}</div>
+              <div style={{ fontSize:"0.72rem", color:"#64748b", marginTop:"0.2rem" }}>
+                {new Date(a.date).toLocaleDateString("en-IN")} · {a.startTime} – {a.endTime}
+              </div>
+              {a.notes && <div style={{ fontSize:"0.72rem", color:"#94a3b8" }}>Reason: {a.notes}</div>}
             </div>
-            <span className={`badge ${a.status==="Confirmed"?"badge-green":"badge-gray"}`}>{a.status}</span>
+            <span className={`badge ${a.status==="CONFIRMED"?"badge-green":a.status==="COMPLETED"?"badge-gray":a.status==="IN_PROGRESS"?"badge-blue":"badge-yellow"}`}>
+              {a.status}
+            </span>
           </div>
-          {a.status==="Confirmed" && (
-            <button className="btn btn-primary btn-sm mt-3 btn-full" onClick={() => { setActive(a); setNotes(""); }}>
+          {a.status === "CONFIRMED" && (
+            <button className="btn btn-primary btn-sm mt-3 btn-full"
+              onClick={() => { setActive(a); setNotes(a.consultationNotes || ""); }}>
               {t.startConsultation}
             </button>
           )}
@@ -153,92 +189,156 @@ function AppointmentsTab({ user, t }) {
 }
 
 function PatientsTab({ user, t }) {
-  const appts = getAppointmentsForDoctor(user.id);
-  const ids = [...new Set(appts.map(a => a.patientId))];
-  const myPatients = getUsers().filter(u => ids.includes(u.id));
-  const [sel, setSel] = useState(null);
-  const [reportView, setReportView] = useState(false);
+  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
+    setLoading(false);
+  }, []);
+
+  const seen = new Set();
+  const myPatients = appointments.reduce((acc, a) => {
+    if (a.patient && !seen.has(a.patient._id)) {
+      seen.add(a.patient._id);
+      acc.push(a.patient);
+    }
+    return acc;
+  }, []);
+
   return (
     <div className="page-content">
       <div className="page-header">
         <div className="page-title">{t.myPatients}</div>
         <div className="page-desc">{t.patientsWhoBooked}</div>
       </div>
-      {myPatients.length===0 ? (
+      {loading ? <div className="empty-state"><div style={{ fontSize:"1.5rem" }}>⏳</div></div>
+      : myPatients.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">👥</div>
           <div className="empty-state-text">{t.noPatientsYet}</div>
         </div>
-      ) : myPatients.map(p => {
-        const ehr = getEHRForPatient(p.id);
-        const reports = getReportsForPatient(p.id);
-        const open = sel?.id===p.id;
-        return (
-          <div className="card" key={p.id} style={{ marginBottom:"0.5rem", cursor:"pointer" }}
-            onClick={() => { setSel(open?null:p); setReportView(false); }}>
-            <div style={{ display:"flex", alignItems:"center", gap:"0.7rem" }}>
-              <div className="list-avatar list-avatar-green">{p.name[0]}</div>
-              <div className="list-body">
-                <div className="list-title">{p.name}</div>
-                <div className="list-sub">{p.age?`Age ${p.age}`:""}{p.location?` · ${p.location}`:""}</div>
-              </div>
-              <span style={{ color:"#94a3b8", fontSize:"0.8rem" }}>{open?"▲":"▼"}</span>
+      ) : myPatients.map(p => (
+        <div className="card" key={p._id} style={{ marginBottom:"0.5rem" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:"0.7rem" }}>
+            <div className="list-avatar list-avatar-green">{p.name[0]}</div>
+            <div className="list-body">
+              <div className="list-title">{p.name}</div>
+              <div className="list-sub">{p.email}</div>
             </div>
-            {open && (
-              <div style={{ marginTop:"0.85rem" }} onClick={e => e.stopPropagation()}>
-                <div className="sep" />
-                {p.medicalHistory && <div style={{ fontSize:"0.8rem", color:"#374151", marginBottom:"0.5rem" }}><strong>{t.medicalHistoryLabel}:</strong> {p.medicalHistory}</div>}
-                <div className="tab-bar" style={{ marginBottom:"0.75rem" }}>
-                  <button className={`tab-btn ${!reportView?"active":""}`} onClick={() => setReportView(false)}>{t.ehrRecordsCount} ({ehr.length})</button>
-                  <button className={`tab-btn ${reportView?"active":""}`} onClick={() => setReportView(true)}>{t.patientReports} ({reports.length})</button>
-                </div>
-                {!reportView && (ehr.length===0 ? <div style={{ fontSize:"0.78rem", color:"#94a3b8" }}>{t.noRecordsYet}</div> :
-                  ehr.slice(-3).map(r => (
-                    <div key={r.id} style={{ background:"#f8fafc", borderRadius:"0.5rem", padding:"0.6rem", marginBottom:"0.4rem", fontSize:"0.8rem" }}>
-                      <div style={{ fontWeight:600 }}>{r.diagnosis}</div>
-                      <div style={{ color:"#64748b" }}>{r.date} · {r.notes?.slice(0,60)}…</div>
-                    </div>
-                  ))
-                )}
-                {reportView && (reports.length===0 ? <div style={{ fontSize:"0.78rem", color:"#94a3b8" }}>{t.noPatientReports}</div> :
-                  reports.map(r => (
-                    <div className="report-item" key={r.id}>
-                      <div className="report-icon">📄</div>
-                      <div className="report-body">
-                        <div className="report-name">{r.name}</div>
-                        <div className="report-meta">{r.fileName} · {r.uploadedAt}</div>
-                      </div>
-                      <span className="badge badge-blue">{t.viewReport}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
           </div>
-        );
-      })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AvailabilityTab({ user, t }) {
+  const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const [schedule, setSchedule] = useState(
+    DAYS.map((_, i) => ({ dayOfWeek: i, startTime: "09:00", endTime: "17:00", slotDurationMinutes: 30, isAvailable: false }))
+  );
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = (i) => setSchedule(prev => prev.map((d, idx) => idx === i ? { ...d, isAvailable: !d.isAvailable } : d));
+  const update = (i, field, val) => setSchedule(prev => prev.map((d, idx) => idx === i ? { ...d, [field]: val } : d));
+
+  const handleSave = async () => {
+    setSaving(true); setError(""); setSaved(false);
+    try {
+      await apiSetDoctorAvailability({
+        weeklySchedule: schedule.filter(d => d.isAvailable),
+        blockedDates: [],
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(err.message || "Failed to save availability.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="page-content">
+      <div className="page-header">
+        <div className="page-title">⏰ Set Availability</div>
+        <div className="page-desc">Configure your weekly schedule</div>
+      </div>
+      {error && <div className="alert alert-danger">{error}</div>}
+      {saved && <div className="alert alert-success">Availability saved!</div>}
+      {schedule.map((day, i) => (
+        <div className="card" key={i} style={{ marginBottom:"0.5rem" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: day.isAvailable ? "0.75rem" : 0 }}>
+            <div style={{ fontWeight:700, fontSize:"0.9rem", color:"#1e293b" }}>{DAYS[i]}</div>
+            <label style={{ display:"flex", alignItems:"center", gap:"0.4rem", cursor:"pointer", fontSize:"0.8rem", color:"#64748b" }}>
+              <input type="checkbox" checked={day.isAvailable} onChange={() => toggle(i)} />
+              Available
+            </label>
+          </div>
+          {day.isAvailable && (
+            <div className="form-grid-2">
+              <div className="form-group" style={{ marginBottom:0 }}>
+                <label className="form-label">Start</label>
+                <input type="time" className="form-input" value={day.startTime}
+                  onChange={e => update(i, "startTime", e.target.value)} />
+              </div>
+              <div className="form-group" style={{ marginBottom:0 }}>
+                <label className="form-label">End</label>
+                <input type="time" className="form-input" value={day.endTime}
+                  onChange={e => update(i, "endTime", e.target.value)} />
+              </div>
+              <div className="form-group" style={{ marginBottom:0 }}>
+                <label className="form-label">Slot (min)</label>
+                <select className="form-select" value={day.slotDurationMinutes}
+                  onChange={e => update(i, "slotDurationMinutes", Number(e.target.value))}>
+                  {[15,20,30,45,60].map(v => <option key={v} value={v}>{v} min</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+      <button className="btn btn-primary btn-full mt-3" onClick={handleSave} disabled={saving}>
+        {saving ? "⏳ Saving…" : "Save Availability"}
+      </button>
     </div>
   );
 }
 
 function PrescriptionsTab({ user, t }) {
-  const appts = getAppointmentsForDoctor(user.id);
-  const ids = [...new Set(appts.map(a => a.patientId))];
-  const myPatients = getUsers().filter(u => ids.includes(u.id));
+  const [appointments, setAppointments] = useState([]);
   const [patientId, setPatientId] = useState("");
   const [meds, setMeds] = useState([{ name:"", dosage:"", frequency:"", duration:"" }]);
   const [notes, setNotes] = useState("");
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
+  }, []);
+
+  const seen = new Set();
+  const myPatients = appointments.reduce((acc, a) => {
+    if (a.patient && !seen.has(a.patient._id)) {
+      seen.add(a.patient._id);
+      acc.push(a.patient);
+    }
+    return acc;
+  }, []);
+
   const addMed = () => setMeds([...meds, { name:"", dosage:"", frequency:"", duration:"" }]);
   const updMed = (i,f,v) => { const u=[...meds]; u[i][f]=v; setMeds(u); };
   const remMed = i => setMeds(meds.filter((_,idx)=>idx!==i));
   const handleSave = () => {
     if (!patientId || !meds[0].name.trim()) return;
-    const p = myPatients.find(p=>p.id===patientId);
+    const p = myPatients.find(p => p._id === patientId);
     savePrescription({ id:genId(), patientId, patientName:p?.name||"", doctorId:user.id, doctorName:user.name, medications:meds.filter(m=>m.name.trim()), notes:notes.trim(), date:new Date().toLocaleDateString("en-IN") });
     setSaved(true);
   };
   const myRx = getPrescriptionsForDoctor(user.id);
+
   if (saved) return (
     <div className="page-content">
       <div className="success-screen">
@@ -269,7 +369,7 @@ function PrescriptionsTab({ user, t }) {
             <label className="form-label">{t.selectPatient} *</label>
             <select className="form-select" value={patientId} onChange={e => setPatientId(e.target.value)}>
               <option value="">{t.selectPatient}</option>
-              {myPatients.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {myPatients.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
             </select>
           </div>
           <div className="sep" />
@@ -377,6 +477,7 @@ export default function DoctorDashboard() {
       case "home":          return <HomeTab user={user} t={t} setTab={setTab} />;
       case "appointments":  return <AppointmentsTab user={user} t={t} />;
       case "patients":      return <PatientsTab user={user} t={t} />;
+      case "availability":  return <AvailabilityTab user={user} t={t} />;
       case "prescriptions": return <PrescriptionsTab user={user} t={t} />;
       case "profile":       return <ProfileTab user={user} t={t} />;
       default:              return <HomeTab user={user} t={t} setTab={setTab} />;

@@ -167,6 +167,54 @@ export async function apiHealthDB() {
 
 export { get as apiGet, post as apiPost, put as apiPut, del as apiDelete };
 
+// ── Appointment & Doctor API ────────────────────────────────────
+
+export async function apiSearchDoctors({ specialization, name, date } = {}) {
+  const params = new URLSearchParams();
+  if (specialization) params.set("specialization", specialization);
+  if (name) params.set("name", name);
+  if (date) params.set("date", date);
+  const res = await get(`/doctors?${params.toString()}`);
+  return handleResponse(res);
+}
+
+export async function apiGetDoctorSlots(doctorId, date) {
+  const res = await get(`/doctors/${doctorId}/availability?date=${date}`);
+  return handleResponse(res);
+}
+
+export async function apiSetDoctorAvailability(payload) {
+  const res = await post("/doctors/availability", payload);
+  return handleResponse(res);
+}
+
+export async function apiBookAppointment({ doctorId, date, startTime, notes }) {
+  const res = await post("/appointments", { doctorId, date, startTime, notes });
+  return handleResponse(res);
+}
+
+export async function apiGetMyAppointments(status) {
+  const url = status ? `/appointments/my?status=${status}` : "/appointments/my";
+  const res = await get(url);
+  return handleResponse(res);
+}
+
+export async function apiCancelAppointment(id, reason) {
+  const res = await request(`/appointments/${id}/cancel`, {
+    method: "PATCH",
+    body: JSON.stringify({ reason }),
+  });
+  return handleResponse(res);
+}
+
+export async function apiUpdateConsultationNotes(id, consultationNotes) {
+  const res = await request(`/appointments/${id}/notes`, {
+    method: "PATCH",
+    body: JSON.stringify({ consultationNotes }),
+  });
+  return handleResponse(res);
+}
+
 // ── Admin API ─────────────────────────────────────────────────────
 // All admin endpoints require ADMIN role JWT — the token is sent
 // automatically via the Authorization header in every request().

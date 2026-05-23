@@ -103,8 +103,8 @@ const setDoctorAvailability = async (req, res) => {
 const bookAppointment = async (req, res) => {
   const { doctorId, date, startTime, notes } = req.body;
 
-  if (!doctorId || !date || !startTime || !notes) {
-    throw createError("Doctor, date, start time, and notes are required", 400);
+  if (!doctorId || !date || !startTime) {
+    throw createError("Doctor, date, and start time are required", 400);
   }
 
   const appointment = await appointmentService.bookAppointment({
