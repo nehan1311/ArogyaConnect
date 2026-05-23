@@ -125,8 +125,8 @@ const dispatchEmail = async ({
       channel: "EMAIL",
       subject,
       message,
-      status: "FAILED",
-      errorMessage: "Email not configured",
+      status: "PENDING",
+      errorMessage: "Email not configured — skipped in prototype mode",
       relatedAppointment: relatedAppointmentId,
     });
     return;
@@ -188,8 +188,8 @@ const dispatchSMS = async ({ user, message, type, relatedAppointmentId }) => {
       type,
       channel: "SMS",
       message,
-      status: "FAILED",
-      errorMessage: "SMS not configured",
+      status: "PENDING",
+      errorMessage: "SMS not configured — skipped in prototype mode",
       relatedAppointment: relatedAppointmentId,
     });
     return;

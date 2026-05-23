@@ -4,15 +4,26 @@ import { useAuth, useLang } from "../../App";
 import { LANGUAGES } from "../../i18n";
 import {
   apiGetMyAppointments, apiUpdateConsultationNotes, apiSetDoctorAvailability,
+  apiGetMyNotifications, apiAddEHREntry, apiGetPatientEHR,
 } from "../../api";
 import {
   savePrescription, getPrescriptionsForDoctor, genId,
 } from "../../store";
+import NotificationPanel from "../../components/NotificationPanel";
 
 function TopBar({ user, t, lang, switchLang }) {
   const initials = user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2);
+  const [showNotif, setShowNotif] = useState(false);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    apiGetMyNotifications({ limit: 5 })
+      .then(d => setUnread(d.total || 0))
+      .catch(() => {});
+  }, []);
+
   return (
-    <div className="top-bar">
+    <div className="top-bar" style={{ position: "relative" }}>
       <span className="top-bar-brand">{t.appName}</span>
       <div className="top-bar-right">
         <div className="lang-toggle">
@@ -22,8 +33,23 @@ function TopBar({ user, t, lang, switchLang }) {
             </button>
           ))}
         </div>
+        <button
+          onClick={() => setShowNotif(v => !v)}
+          style={{ position: "relative", background: "none", border: "none", cursor: "pointer", fontSize: "1.2rem", padding: "0.2rem" }}
+        >
+          🔔
+          {unread > 0 && (
+            <span style={{
+              position: "absolute", top: 0, right: 0,
+              background: "#b91c1c", color: "#fff",
+              borderRadius: "999px", fontSize: "0.55rem",
+              fontWeight: 700, padding: "0 3px", minWidth: 14, textAlign: "center",
+            }}>{unread > 99 ? "99+" : unread}</span>
+          )}
+        </button>
         <div className="avatar avatar-blue">{initials}</div>
       </div>
+      {showNotif && <NotificationPanel onClose={() => setShowNotif(false)} />}
     </div>
   );
 }
@@ -120,6 +146,13 @@ function AppointmentsTab({ user, t }) {
     setSaving(true);
     try {
       await apiUpdateConsultationNotes(active._id, notes.trim());
+      // Also save to patient EHR
+      await apiAddEHREntry(active.patient._id, {
+        type: "CONSULTATION",
+        title: "Consultation Notes",
+        content: notes.trim(),
+        appointmentId: active._id,
+      });
       await load();
     } catch {}
     finally { setSaving(false); setActive(null); setNotes(""); }
@@ -191,6 +224,9 @@ function AppointmentsTab({ user, t }) {
 function PatientsTab({ user, t }) {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [patientEHR, setPatientEHR] = useState(null);
+  const [ehrLoading, setEhrLoading] = useState(false);
 
   useEffect(() => {
     apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
@@ -206,6 +242,22 @@ function PatientsTab({ user, t }) {
     return acc;
   }, []);
 
+  const handleViewEHR = async (p) => {
+    if (selectedPatient?._id === p._id) { setSelectedPatient(null); setPatientEHR(null); return; }
+    setSelectedPatient(p);
+    setEhrLoading(true);
+    try {
+      const data = await apiGetPatientEHR(p._id);
+      setPatientEHR(data.ehr);
+    } catch {
+      setPatientEHR(null);
+    } finally {
+      setEhrLoading(false);
+    }
+  };
+
+  const ENTRY_ICON = { CONSULTATION:"🩺", DIAGNOSIS:"🔬", LAB_REPORT:"📋", PRESCRIPTION:"💊", VACCINATION:"💉", GENERAL_NOTE:"📝" };
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -219,14 +271,38 @@ function PatientsTab({ user, t }) {
           <div className="empty-state-text">{t.noPatientsYet}</div>
         </div>
       ) : myPatients.map(p => (
-        <div className="card" key={p._id} style={{ marginBottom:"0.5rem" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:"0.7rem" }}>
-            <div className="list-avatar list-avatar-green">{p.name[0]}</div>
-            <div className="list-body">
-              <div className="list-title">{p.name}</div>
-              <div className="list-sub">{p.email}</div>
+        <div key={p._id}>
+          <div className="card" style={{ marginBottom:"0.5rem", cursor:"pointer" }}
+            onClick={() => handleViewEHR(p)}>
+            <div style={{ display:"flex", alignItems:"center", gap:"0.7rem" }}>
+              <div className="list-avatar list-avatar-green">{p.name[0]}</div>
+              <div className="list-body">
+                <div className="list-title">{p.name}</div>
+                <div className="list-sub">{p.email}</div>
+              </div>
+              <span style={{ color:"#94a3b8", fontSize:"0.8rem" }}>
+                {selectedPatient?._id === p._id ? "▲" : "▼"}
+              </span>
             </div>
           </div>
+          {selectedPatient?._id === p._id && (
+            <div style={{ marginBottom:"0.75rem", paddingLeft:"0.5rem" }}>
+              {ehrLoading ? (
+                <div style={{ fontSize:"0.78rem", color:"#94a3b8", padding:"0.5rem" }}>⏳ Loading EHR…</div>
+              ) : !patientEHR || patientEHR.entries.length === 0 ? (
+                <div style={{ fontSize:"0.78rem", color:"#94a3b8", padding:"0.5rem" }}>{t.noRecordsYet}</div>
+              ) : patientEHR.entries.slice(-5).reverse().map(e => (
+                <div key={e._id} style={{ background:"#f8fafc", borderRadius:"0.5rem", padding:"0.6rem", marginBottom:"0.4rem", fontSize:"0.8rem" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.2rem" }}>
+                    <span>{ENTRY_ICON[e.type]||"📄"}</span>
+                    <span style={{ fontWeight:600 }}>{e.title}</span>
+                    <span style={{ fontSize:"0.68rem", color:"#64748b", marginLeft:"auto" }}>{new Date(e.date).toLocaleDateString("en-IN")}</span>
+                  </div>
+                  <div style={{ color:"#374151", lineHeight:1.5 }}>{e.content}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>

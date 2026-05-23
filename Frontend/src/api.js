@@ -215,6 +215,54 @@ export async function apiUpdateConsultationNotes(id, consultationNotes) {
   return handleResponse(res);
 }
 
+// ── EHR API ─────────────────────────────────────────────────────
+
+export async function apiGetMyEHR() {
+  const res = await get("/ehr/me");
+  return handleResponse(res);
+}
+
+export async function apiGetPatientEHR(patientId, shareToken) {
+  const url = shareToken ? `/ehr/${patientId}?shareToken=${shareToken}` : `/ehr/${patientId}`;
+  const res = await get(url);
+  return handleResponse(res);
+}
+
+export async function apiAddEHREntry(patientId, { type, title, content, appointmentId }) {
+  const res = await post(`/ehr/${patientId}/entries`, { type, title, content, appointmentId });
+  return handleResponse(res);
+}
+
+export async function apiGenerateShareToken(grantedToId, expiryHours = 48) {
+  const res = await post("/ehr/share", { grantedToId, expiryHours });
+  return handleResponse(res);
+}
+
+export async function apiRevokeShareToken(tokenId) {
+  const res = await request(`/ehr/share/${tokenId}/revoke`, { method: "PATCH" });
+  return handleResponse(res);
+}
+
+export async function apiGetEHRAuditLogs(patientId, { page = 1, limit = 20 } = {}) {
+  const res = await get(`/ehr/${patientId}/audit?page=${page}&limit=${limit}`);
+  return handleResponse(res);
+}
+
+// ── Notifications API ────────────────────────────────────────────
+
+export async function apiGetMyNotifications({ page = 1, limit = 20, type, status } = {}) {
+  const params = new URLSearchParams({ page, limit });
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
+  const res = await get(`/notifications/my?${params.toString()}`);
+  return handleResponse(res);
+}
+
+export async function apiGetNotificationStats() {
+  const res = await get("/notifications/stats");
+  return handleResponse(res);
+}
+
 // ── Admin API ─────────────────────────────────────────────────────
 // All admin endpoints require ADMIN role JWT — the token is sent
 // automatically via the Authorization header in every request().
