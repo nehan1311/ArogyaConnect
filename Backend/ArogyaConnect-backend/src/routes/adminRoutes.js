@@ -1,37 +1,36 @@
 const express = require("express");
 
-const authenticate = require("../middlewares/authenticate");
-const authorize    = require("../middlewares/authorize");
 const {
-  getStats,
-  getDoctors,
-  getPatients,
+  getDashboardSummary,
+  getSystemHealth,
+  getAllUsers,
+  getUserById,
+  updateUserStatus,
   approveDoctor,
-  rejectDoctor,
-  suspendDoctor,
-  reactivateDoctor,
-  deactivatePatient,
-  activatePatient,
+  deleteUser,
+  getAllAppointments,
+  getAppointmentStats,
+  getAuditLogs,
+  getNotificationStats,
 } = require("../controllers/adminController");
+const authenticate = require("../middlewares/authenticate");
+const authorize = require("../middlewares/authorize");
 
 const router = express.Router();
 
-// All admin routes require a valid JWT AND the ADMIN role
-router.use(authenticate, authorize("ADMIN"));
+router.use(authenticate);
+router.use(authorize("ADMIN"));
 
-// ── Stats ────────────────────────────────────────────────────────
-router.get("/stats", getStats);
-
-// ── Doctor management ────────────────────────────────────────────
-router.get("/doctors",                    getDoctors);
-router.patch("/doctors/:id/approve",      approveDoctor);
-router.patch("/doctors/:id/reject",       rejectDoctor);
-router.patch("/doctors/:id/suspend",      suspendDoctor);
-router.patch("/doctors/:id/reactivate",   reactivateDoctor);
-
-// ── Patient management ───────────────────────────────────────────
-router.get("/patients",                   getPatients);
-router.patch("/patients/:id/deactivate",  deactivatePatient);
-router.patch("/patients/:id/activate",    activatePatient);
+router.get("/dashboard", getDashboardSummary);
+router.get("/system-health", getSystemHealth);
+router.get("/users", getAllUsers);
+router.get("/users/:id", getUserById);
+router.patch("/users/:id/status", updateUserStatus);
+router.patch("/users/:id/approve", approveDoctor);
+router.delete("/users/:id", deleteUser);
+router.get("/appointments/stats", getAppointmentStats);
+router.get("/appointments", getAllAppointments);
+router.get("/audit-logs", getAuditLogs);
+router.get("/notifications/stats", getNotificationStats);
 
 module.exports = router;

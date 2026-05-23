@@ -12,6 +12,8 @@ import {
   saveTriageReport, getReportsForPatient, saveReport, genId,
 } from "../../store";
 import NotificationPanel from "../../components/NotificationPanel";
+import PatientAppointmentsPanel from "../../components/PatientAppointmentsPanel";
+import { PatientVideoTab } from "../../components/VideoConsultation";
 
 const URGENCY = {
   Low:      { cls:"low",      color:"#15803d", advice: k => k.adviceLow      },
@@ -817,9 +819,9 @@ export default function PatientDashboard() {
       case "home":         return <HomeTab user={user} t={t} setTab={setTab} />;
       case "triage":       return <TriageTab user={user} t={t} lang={lang} />;
       case "book":         return <BookTab user={user} t={t} />;
-      case "appointments": return <AppointmentsTab user={user} t={t} />;
+      case "appointments": return <PatientAppointmentsPanel t={t} />;
       case "records":      return <RecordsTab user={user} t={t} />;
-      case "video":        return <VideoTab user={user} t={t} />;
+      case "video":        return <PatientVideoTab t={t} />;
       case "profile":      return <ProfileTab user={user} t={t} />;
       default:             return <HomeTab user={user} t={t} setTab={setTab} />;
     }

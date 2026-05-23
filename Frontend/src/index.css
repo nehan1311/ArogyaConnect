@@ -550,3 +550,17 @@ body {
     box-shadow: 0 8px 40px rgba(0,0,0,0.18);
   }
 }
+
+/* ── Video Consultation ── */
+.pulse-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #15803d;
+  animation: pulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(1.35); }
+}

@@ -10,6 +10,7 @@ import {
   savePrescription, getPrescriptionsForDoctor, genId,
 } from "../../store";
 import NotificationPanel from "../../components/NotificationPanel";
+import DoctorAppointmentsPanel from "../../components/DoctorAppointmentsPanel";
 
 function TopBar({ user, t, lang, switchLang }) {
   const initials = user.name.split(" ").map(n=>n[0]).join("").toUpperCase().slice(0,2);
@@ -551,7 +552,7 @@ export default function DoctorDashboard() {
   const render = () => {
     switch(tab) {
       case "home":          return <HomeTab user={user} t={t} setTab={setTab} />;
-      case "appointments":  return <AppointmentsTab user={user} t={t} />;
+      case "appointments":  return <DoctorAppointmentsPanel t={t} />;
       case "patients":      return <PatientsTab user={user} t={t} />;
       case "availability":  return <AvailabilityTab user={user} t={t} />;
       case "prescriptions": return <PrescriptionsTab user={user} t={t} />;
