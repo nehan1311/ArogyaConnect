@@ -3,6 +3,7 @@ const DoctorAvailability = require("../models/DoctorAvailability");
 const User = require("../models/User");
 const appointmentService = require("../services/appointmentService");
 const notificationService = require("../services/notificationService");
+const prescriptionService = require("../services/prescriptionService");
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -195,7 +196,7 @@ const cancelAppointment = async (req, res) => {
 };
 
 const updateConsultationNotes = async (req, res) => {
-  const { consultationNotes } = req.body;
+  const { consultationNotes, prescription } = req.body;
 
   if (consultationNotes === undefined) {
     throw createError("Consultation notes are required", 400);
@@ -220,6 +221,25 @@ const updateConsultationNotes = async (req, res) => {
   }
 
   await appointment.save();
+
+  if (prescription) {
+    try {
+      const createdPrescription = await prescriptionService.issuePrescription({
+        doctorId: req.user.id,
+        patientId: appointment.patient._id.toString(),
+        appointmentId: appointment._id.toString(),
+        medications: prescription.medications,
+        diagnosis: prescription.diagnosis,
+        notes: prescription.notes,
+        validDays: prescription.validDays,
+        refillsAllowed: prescription.refillsAllowed,
+      });
+
+      appointment.prescription = createdPrescription._id;
+      await appointment.save();
+    } catch (error) {
+    }
+  }
 
   res.status(200).json({
     success: true,

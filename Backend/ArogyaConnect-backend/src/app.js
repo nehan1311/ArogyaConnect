@@ -12,6 +12,7 @@ const doctorRoutes = require("./routes/doctorRoutes");
 const ehrRoutes = require("./routes/ehrRoutes");
 const healthRoutes = require("./routes/healthRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const prescriptionRoutes = require("./routes/prescriptionRoutes");
 const errorHandler = require("./middlewares/errorHandler");
 
 const app = express();
@@ -29,6 +30,7 @@ app.use("/api/appointments", appointmentRoutes);
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/ehr", ehrRoutes);
+app.use("/api/prescriptions", prescriptionRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
