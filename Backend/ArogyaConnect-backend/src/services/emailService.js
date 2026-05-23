@@ -41,4 +41,10 @@ const sendPasswordResetEmail = async (email, resetURL) => {
 module.exports = {
   sendEmail,
   sendPasswordResetEmail,
+  isEmailConfigured: () =>
+    !!(
+      process.env.SMTP_HOST &&
+      process.env.SMTP_USER &&
+      process.env.SMTP_PASS
+    ),
 };

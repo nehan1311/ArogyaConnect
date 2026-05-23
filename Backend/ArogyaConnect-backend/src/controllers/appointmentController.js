@@ -2,6 +2,7 @@ const Appointment = require("../models/Appointment");
 const DoctorAvailability = require("../models/DoctorAvailability");
 const User = require("../models/User");
 const appointmentService = require("../services/appointmentService");
+const notificationService = require("../services/notificationService");
 
 const createError = (message, statusCode) => {
   const error = new Error(message);
@@ -113,27 +114,9 @@ const bookAppointment = async (req, res) => {
     notes,
   });
 
-  let notificationService = null;
-
   try {
-    notificationService = require("../services/notificationService");
+    await notificationService.sendAppointmentConfirmation(appointment);
   } catch (error) {
-    if (
-      error.code !== "MODULE_NOT_FOUND" ||
-      !error.message.includes("notificationService")
-    ) {
-      throw error;
-    }
-  }
-
-  if (
-    notificationService &&
-    typeof notificationService.sendAppointmentBookedNotification === "function"
-  ) {
-    try {
-      await notificationService.sendAppointmentBookedNotification(appointment);
-    } catch (error) {
-    }
   }
 
   res.status(201).json({
@@ -199,6 +182,11 @@ const cancelAppointment = async (req, res) => {
     role: req.user.role,
     reason: req.body.reason,
   });
+
+  try {
+    await notificationService.sendCancellationNotice(appointment);
+  } catch (error) {
+  }
 
   res.status(200).json({
     success: true,
