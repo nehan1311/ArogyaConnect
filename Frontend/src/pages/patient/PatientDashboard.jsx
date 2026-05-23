@@ -112,14 +112,46 @@ function TriageTab({ user, t, lang }) {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const history = getTriageForPatient(user.id);
-  const analyze = () => {
+
+  const analyze = async () => {
     if (!symptoms.trim()) return;
-    setLoading(true); setResult(null);
-    setTimeout(() => {
-      const urgency = classify(symptoms);
+    
+    setLoading(true); 
+    setResult(null);
+    
+    try {
+      // 1. Send the symptoms to YOUR local Python ML server!
+      const response = await fetch("http://127.0.0.1:8000/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symptoms: symptoms })
+      });
+
+      if (!response.ok) throw new Error("Failed to fetch prediction");
+      
+      const data = await response.json();
+      
+      // 2. Handle the "unknown" or "insufficient_data" edge cases we built earlier
+      if (data.risk_level === "unknown" || data.risk_level === "insufficient_data") {
+        alert(data.message); // Show the user the error message
+        setLoading(false);
+        return;
+      }
+
+      // 3. Convert FastAPI's lowercase output ("high") to the UI's capitalized format ("High")
+      const urgencyMap = { "low": "Low", "medium": "Medium", "high": "High", "critical": "Critical" };
+      const urgency = urgencyMap[data.risk_level] || "Low";
+
+      // 4. Save to history and update UI
       saveTriageReport({ id:genId(), patientId:user.id, symptoms, urgency, date:new Date().toLocaleString("en-IN") });
-      setResult(urgency); setLoading(false);
-    }, 1500);
+      setResult(urgency);
+      
+    } catch (error) {
+      console.error("AI Server Error:", error);
+      alert("Could not connect to the AI model. Ensure your FastAPI server is running.");
+    } finally {
+      setLoading(false);
+    }
   };
   const cfg = result ? URGENCY[result] : null;
   return (
