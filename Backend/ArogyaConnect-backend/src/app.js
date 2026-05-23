@@ -6,8 +6,13 @@ const cors = require("cors");
 const morgan = require("morgan");
 const cookieParser = require("cookie-parser");
 
+const appointmentRoutes = require("./routes/appointmentRoutes");
 const authRoutes = require("./routes/authRoutes");
+const doctorRoutes = require("./routes/doctorRoutes");
+const ehrRoutes = require("./routes/ehrRoutes");
 const healthRoutes = require("./routes/healthRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
+const prescriptionRoutes = require("./routes/prescriptionRoutes");
 const errorHandler = require("./middlewares/errorHandler");
 
 const app = express();
@@ -21,6 +26,11 @@ app.use(cookieParser());
 
 app.use("/api/health", healthRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/appointments", appointmentRoutes);
+app.use("/api/doctors", doctorRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/ehr", ehrRoutes);
+app.use("/api/prescriptions", prescriptionRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
