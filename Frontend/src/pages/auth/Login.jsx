@@ -1,19 +1,19 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useLang } from "../../App";
-import { findUserByEmail } from "../../store";
 import { LANGUAGES } from "../../i18n";
+import { apiLogin } from "../../api";
 
 export default function Login() {
   const navigate = useNavigate();
   const { login } = useAuth();
   const { t, lang, switchLang } = useLang();
 
-  const [role, setRole] = useState("patient");
-  const [email, setEmail] = useState("");
+  const [role, setRole]         = useState("patient");
+  const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [error, setError]       = useState("");
+  const [loading, setLoading]   = useState(false);
 
   const roles = [
     { id: "patient", icon: "👤", label: t.patient },
@@ -21,39 +21,63 @@ export default function Login() {
     { id: "admin",   icon: "🔐", label: t.admin   },
   ];
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
-    if (!email.trim() || !password) { setError(t.signIn + " — " + t.email + " / " + t.password); return; }
+    if (!email.trim() || !password) {
+      setError("Please enter your email and password.");
+      return;
+    }
+
     setLoading(true);
-    setTimeout(() => {
-      if (role === "admin") {
-        if (email === "admin@arogyaconnect.in" && password === "Admin@123") {
-          login({ id: "admin-1", name: "Admin", role: "admin", email });
-          navigate("/admin-dashboard");
-        } else { setError("Invalid admin credentials."); }
-        setLoading(false); return;
+    try {
+      const data = await apiLogin({ email: email.trim().toLowerCase(), password });
+
+      // data.user.role comes back as "PATIENT" | "DOCTOR" | "ADMIN"
+      const serverRole = (data.user.role || "").toLowerCase();
+
+      // Guard: make sure the selected role matches what the server returned
+      if (serverRole !== role) {
+        setError(`This account is registered as a ${serverRole}, not a ${role}.`);
+        setLoading(false);
+        return;
       }
-      const user = findUserByEmail(email);
-      if (!user) { setError("No account found. Please sign up."); setLoading(false); return; }
-      if (user.role !== role) { setError(`This account is a ${user.role}, not a ${role}.`); setLoading(false); return; }
-      if (user.password !== password) { setError("Incorrect password."); setLoading(false); return; }
-      if (user.role === "doctor" && user.status !== "active") {
-        setError("Account pending admin verification."); setLoading(false); return;
+
+      // Doctor pending approval
+      if (serverRole === "doctor" && data.user.isApproved === false) {
+        setError("Your account is pending admin verification. You will be notified once approved.");
+        setLoading(false);
+        return;
       }
-      login(user);
-      navigate(user.role === "doctor" ? "/doctor-dashboard" : "/patient-dashboard");
+
+      login(data.accessToken, data.user);
+
+      if (serverRole === "patient") navigate("/patient-dashboard");
+      else if (serverRole === "doctor") navigate("/doctor-dashboard");
+      else navigate("/admin-dashboard");
+
+    } catch (err) {
+      // Map common HTTP status codes to friendly messages
+      if (err.status === 423) {
+        setError("Account locked after too many failed attempts. Try again in 15 minutes.");
+      } else if (err.status === 403) {
+        setError("Account deactivated. Please contact support.");
+      } else {
+        setError(err.message || "Login failed. Please try again.");
+      }
+    } finally {
       setLoading(false);
-    }, 500);
+    }
   };
 
   return (
     <div className="auth-screen">
       <div className="auth-header">
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "1rem" }}>
+        <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:"1rem" }}>
           <div className="lang-toggle">
             {LANGUAGES.map(l => (
-              <button key={l.code} className={`lang-btn ${lang === l.code ? "active" : ""}`} onClick={() => switchLang(l.code)}>
+              <button key={l.code} className={`lang-btn ${lang === l.code ? "active" : ""}`}
+                onClick={() => switchLang(l.code)}>
                 {l.label}
               </button>
             ))}
@@ -67,6 +91,7 @@ export default function Login() {
         <div className="auth-section-title">{t.welcomeBack}</div>
         <div className="auth-section-sub">{t.signInToAccount}</div>
 
+        {/* Role selector */}
         <div className="role-grid">
           {roles.map(r => (
             <div key={r.id} className={`role-tile ${role === r.id ? "selected" : ""}`}
@@ -95,16 +120,10 @@ export default function Login() {
           </button>
         </form>
 
-        {role === "admin" && (
-          <div className="alert alert-info mt-3" style={{ fontSize: "0.75rem" }}>
-            admin@arogyaconnect.in / Admin@123
-          </div>
-        )}
-
         {role !== "admin" && (
           <>
             <div className="sep" />
-            <p style={{ textAlign: "center", fontSize: "0.82rem", color: "#64748b" }}>
+            <p style={{ textAlign:"center", fontSize:"0.82rem", color:"#64748b" }}>
               {role === "patient" ? "New patient?" : "New doctor?"}{" "}
               <span className="text-blue font-bold cursor-pointer"
                 onClick={() => navigate(role === "patient" ? "/patient-signup" : "/doctor-signup")}>
@@ -112,6 +131,17 @@ export default function Login() {
               </span>
             </p>
           </>
+        )}
+
+        {role === "admin" && (
+          <p style={{ textAlign:"center", fontSize:"0.78rem", color:"#64748b", marginTop:"0.75rem" }}>
+            Use the{" "}
+            <span className="text-blue cursor-pointer font-bold"
+              onClick={() => navigate("/admin-login")}>
+              Admin Portal
+            </span>
+            {" "}for MFA login.
+          </p>
         )}
       </div>
     </div>
