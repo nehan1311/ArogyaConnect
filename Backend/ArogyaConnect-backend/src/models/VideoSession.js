@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 
+
 const videoSessionSchema = new mongoose.Schema(
   {
     appointment: {
@@ -29,5 +30,6 @@ const videoSessionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
 
 module.exports = mongoose.model("VideoSession", videoSessionSchema);

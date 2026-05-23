@@ -65,12 +65,10 @@ app.use("/api/ehr", ehrRoutes);
 app.use("/api/prescriptions", prescriptionRoutes);
 app.use("/api/video", videoRoutes);
 
-// ── 404 ───────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ success: false, message: "Route not found" });
 });
 
-// ── Global error handler ──────────────────────────────────────────
 app.use(errorHandler);
 
 module.exports = app;

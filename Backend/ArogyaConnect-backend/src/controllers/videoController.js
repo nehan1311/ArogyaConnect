@@ -7,6 +7,7 @@ const createError = (message, statusCode) => {
   return err;
 };
 
+
 const createRoom = async (req, res) => {
   const { appointmentId } = req.body;
   if (!appointmentId) throw createError("appointmentId is required", 400);
@@ -26,6 +27,7 @@ const createRoom = async (req, res) => {
       "Doctor: use doctorToken. Patient: use patientToken. Both open roomUrl.",
   });
 };
+
 
 const joinRoom = async (req, res) => {
   const { appointmentId } = req.body;

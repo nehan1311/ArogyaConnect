@@ -11,6 +11,7 @@ const createError = (message, statusCode) => {
   return err;
 };
 
+
 const dailyAxios = () =>
   axios.create({
     baseURL: "https://api.daily.co/v1",
@@ -18,6 +19,7 @@ const dailyAxios = () =>
   });
 
 const generateRoomName = (appointmentId) => "appt-" + appointmentId.toString();
+
 
 const generateRoomUrl = (roomName) =>
   "https://" + process.env.DAILY_DOMAIN + ".daily.co/" + roomName;
@@ -44,6 +46,7 @@ const createDailyRoom = async (roomName) => {
     throw createError("Daily.co room creation failed: " + msg, 502);
   }
 };
+
 
 const createMeetingToken = async ({ roomName, userId, userName, isOwner }) => {
   const { data } = await dailyAxios().post("/meeting-tokens", {
