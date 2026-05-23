@@ -215,6 +215,39 @@ export async function apiUpdateConsultationNotes(id, consultationNotes) {
   return handleResponse(res);
 }
 
+// ── Prescription API ────────────────────────────────────────────
+
+export async function apiIssuePrescription(payload) {
+  const res = await post("/prescriptions", payload);
+  return handleResponse(res);
+}
+
+export async function apiGetMyPrescriptions({ status, active } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (active) params.set("active", "true");
+  const res = await get(`/prescriptions/my?${params.toString()}`);
+  return handleResponse(res);
+}
+
+export async function apiGetPatientPrescriptions(patientId) {
+  const res = await get(`/prescriptions/patient/${patientId}`);
+  return handleResponse(res);
+}
+
+export async function apiRequestRefill(prescriptionId) {
+  const res = await post(`/prescriptions/${prescriptionId}/refill`, {});
+  return handleResponse(res);
+}
+
+export async function apiUpdatePrescriptionStatus(prescriptionId, status) {
+  const res = await request(`/prescriptions/${prescriptionId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
+  return handleResponse(res);
+}
+
 // ── EHR API ─────────────────────────────────────────────────────
 
 export async function apiGetMyEHR() {

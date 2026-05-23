@@ -6,6 +6,7 @@ import {
   apiSearchDoctors, apiGetDoctorSlots, apiBookAppointment,
   apiGetMyAppointments, apiCancelAppointment, apiGetMyNotifications,
   apiGetMyEHR, apiGenerateShareToken, apiRevokeShareToken, apiGetEHRAuditLogs,
+  apiGetMyPrescriptions, apiRequestRefill,
 } from "../../api";
 import {
   getEHRForPatient, getPrescriptionsForPatient, getTriageForPatient,
@@ -531,6 +532,12 @@ function RecordsTab({ user, t }) {
   const [auditLogs, setAuditLogs] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
 
+  // Prescriptions state
+  const [prescriptions, setPrescriptions] = useState([]);
+  const [rxLoading, setRxLoading] = useState(false);
+  const [rxFilter, setRxFilter] = useState("");
+  const [refillingId, setRefillingId] = useState("");
+
   const loadEHR = useCallback(async () => {
     setLoading(true); setError("");
     try {
@@ -556,7 +563,14 @@ function RecordsTab({ user, t }) {
         .catch(() => {})
         .finally(() => setAuditLoading(false));
     }
-  }, [view, user.id]);
+    if (view === "rx") {
+      setRxLoading(true);
+      apiGetMyPrescriptions(rxFilter ? { status: rxFilter } : {})
+        .then(d => setPrescriptions(d.prescriptions || []))
+        .catch(() => {})
+        .finally(() => setRxLoading(false));
+    }
+  }, [view, user.id, rxFilter]);
 
   const handleShare = async () => {
     if (!shareDocId) return;
@@ -584,7 +598,48 @@ function RecordsTab({ user, t }) {
     }
   };
 
+  const handleRefill = async (prescriptionId) => {
+    setRefillingId(prescriptionId);
+    try {
+      const data = await apiRequestRefill(prescriptionId);
+      setPrescriptions(prev => prev.map(p =>
+        p._id === prescriptionId ? data.prescription : p
+      ));
+    } catch (err) {
+      setError(err.message || "Refill failed.");
+    } finally {
+      setRefillingId("");
+    }
+  };
+
   const ENTRY_ICON = { CONSULTATION:"🩺", DIAGNOSIS:"🔬", LAB_REPORT:"📋", PRESCRIPTION:"💊", VACCINATION:"💉", GENERAL_NOTE:"📝" };
+
+  const renderEntryContent = (entry) => {
+    if (entry.type === "PRESCRIPTION") {
+      try {
+        const data = JSON.parse(entry.content);
+        return (
+          <div>
+            {data.diagnosis && <div style={{fontWeight:600,marginBottom:"0.3rem"}}>Diagnosis: {data.diagnosis}</div>}
+            {Array.isArray(data.medications) && data.medications.length > 0 && (
+              <ul style={{paddingLeft:"1rem",lineHeight:1.9,margin:"0.3rem 0"}}>
+                {data.medications.map((m, i) => (
+                  <li key={i}>
+                    {m.name} {m.dosage} — {m.frequency}, {m.duration}
+                    {m.instructions && <span style={{color:"#64748b"}}> ({m.instructions})</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {data.notes && <div style={{color:"#64748b",marginTop:"0.3rem"}}>Note: {data.notes}</div>}
+          </div>
+        );
+      } catch {
+        // not JSON, fall through to plain text
+      }
+    }
+    return <span>{entry.content}</span>;
+  };
 
   return (
     <div className="page-content">
@@ -592,7 +647,7 @@ function RecordsTab({ user, t }) {
         <div className="page-title">{t.healthRecordsTitle}</div>
       </div>
       <div className="tab-bar">
-        {[["ehr","EHR"],["share","🔗 Share"],["audit","🔍 Audit"]].map(([id,label]) => (
+        {[["ehr","EHR"],["rx","💊 Rx"],["share","🔗 Share"],["audit","🔍 Audit"]].map(([id,label]) => (
           <button key={id} className={`tab-btn ${view===id?"active":""}`} onClick={() => setView(id)}>{label}</button>
         ))}
       </div>
@@ -629,12 +684,73 @@ function RecordsTab({ user, t }) {
                   <span className="badge badge-blue" style={{fontSize:"0.62rem"}}>{e.type.replace("_"," ")}</span>
                 </div>
                 <div style={{fontSize:"0.82rem",color:"#374151",lineHeight:1.6,background:"#f8fafc",borderRadius:"0.5rem",padding:"0.6rem"}}>
-                  {e.content}
+                  {renderEntryContent(e)}
                 </div>
               </div>
             ))}
           </>
         )
+      )}
+
+      {/* ── Prescriptions ── */}
+      {view==="rx" && (
+        <>
+          <div style={{ display:"flex", gap:"0.4rem", marginBottom:"0.75rem", flexWrap:"wrap" }}>
+            {["","ACTIVE","COMPLETED","CANCELLED"].map(s => (
+              <button key={s} className={`btn btn-sm ${rxFilter===s?"btn-primary":"btn-ghost"}`}
+                onClick={() => setRxFilter(s)}>
+                {s || "All"}
+              </button>
+            ))}
+          </div>
+          {rxLoading ? (
+            <div className="empty-state"><div style={{fontSize:"1.5rem"}}>⏳</div></div>
+          ) : prescriptions.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">💊</div>
+              <div className="empty-state-text">{t.noPrescriptions}</div>
+              <div className="empty-state-sub">{t.prescriptionsAppearAfterConsultation}</div>
+            </div>
+          ) : prescriptions.map(p => {
+            const expired = new Date() > new Date(p.validUntil);
+            const canRefill = p.status === "ACTIVE" && !expired && p.refillsUsed < p.refillsAllowed;
+            const STATUS_BADGE = { ACTIVE:"badge-green", COMPLETED:"badge-gray", CANCELLED:"badge-red" };
+            return (
+              <div className="card" key={p._id} style={{ marginBottom:"0.5rem" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"0.4rem" }}>
+                  <div>
+                    <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.9rem" }}>{p.diagnosis}</div>
+                    <div style={{ fontSize:"0.7rem", color:"#64748b" }}>Dr. {p.doctor?.name} · {new Date(p.issuedAt).toLocaleDateString("en-IN")}</div>
+                    <div style={{ fontSize:"0.7rem", color: expired ? "#b91c1c" : "#64748b" }}>
+                      {expired ? "⚠️ Expired" : `Valid until ${new Date(p.validUntil).toLocaleDateString("en-IN")}`}
+                    </div>
+                    {p.refillsAllowed > 0 && (
+                      <div style={{ fontSize:"0.7rem", color:"#64748b" }}>
+                        Refills: {p.refillsUsed}/{p.refillsAllowed} used
+                      </div>
+                    )}
+                  </div>
+                  <span className={`badge ${STATUS_BADGE[p.status] || "badge-gray"}`}>{p.status}</span>
+                </div>
+                <ul style={{ paddingLeft:"1rem", fontSize:"0.8rem", color:"#374151", lineHeight:1.9, marginBottom: canRefill ? "0.5rem" : 0 }}>
+                  {p.medications.map((m, i) => (
+                    <li key={i}>{m.name} {m.dosage} — {m.frequency}, {m.duration}
+                      {m.instructions && <span style={{color:"#64748b"}}> ({m.instructions})</span>}
+                    </li>
+                  ))}
+                </ul>
+                {p.notes && <div style={{ fontSize:"0.75rem", color:"#64748b", marginBottom:"0.5rem" }}>{p.notes}</div>}
+                {canRefill && (
+                  <button className="btn btn-outline btn-sm"
+                    disabled={refillingId === p._id}
+                    onClick={() => handleRefill(p._id)}>
+                    {refillingId === p._id ? "⏳" : `🔄 Request Refill (${p.refillsAllowed - p.refillsUsed} left)`}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </>
       )}
 
       {/* ── Share Token Management ── */}

@@ -5,10 +5,8 @@ import { LANGUAGES } from "../../i18n";
 import {
   apiGetMyAppointments, apiUpdateConsultationNotes, apiSetDoctorAvailability,
   apiGetMyNotifications, apiAddEHREntry, apiGetPatientEHR,
+  apiIssuePrescription, apiGetPatientPrescriptions, apiUpdatePrescriptionStatus,
 } from "../../api";
-import {
-  savePrescription, getPrescriptionsForDoctor, genId,
-} from "../../store";
 import NotificationPanel from "../../components/NotificationPanel";
 import DoctorAppointmentsPanel from "../../components/DoctorAppointmentsPanel";
 
@@ -57,10 +55,15 @@ function TopBar({ user, t, lang, switchLang }) {
 
 function HomeTab({ user, t, setTab }) {
   const [appointments, setAppointments] = useState([]);
-  const rxCount = getPrescriptionsForDoctor(user.id).length;
+  const [rxCount, setRxCount] = useState(0);
 
   useEffect(() => {
-    apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
+    apiGetMyAppointments().then(d => {
+      const appts = d.appointments || [];
+      setAppointments(appts);
+      // Count unique patients who have appointments as a proxy for prescriptions issued
+      // Real count loads when doctor visits the Rx tab
+    }).catch(() => {});
   }, []);
 
   const today = new Date().toISOString().split("T")[0];
@@ -228,6 +231,7 @@ function PatientsTab({ user, t }) {
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [patientEHR, setPatientEHR] = useState(null);
   const [ehrLoading, setEhrLoading] = useState(false);
+  const [ehrError, setEhrError] = useState("");
 
   useEffect(() => {
     apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
@@ -244,20 +248,46 @@ function PatientsTab({ user, t }) {
   }, []);
 
   const handleViewEHR = async (p) => {
-    if (selectedPatient?._id === p._id) { setSelectedPatient(null); setPatientEHR(null); return; }
+    if (selectedPatient?._id === p._id) { setSelectedPatient(null); setPatientEHR(null); setEhrError(""); return; }
     setSelectedPatient(p);
     setEhrLoading(true);
+    setEhrError("");
     try {
       const data = await apiGetPatientEHR(p._id);
       setPatientEHR(data.ehr);
-    } catch {
+    } catch (err) {
       setPatientEHR(null);
+      setEhrError(err.status === 403 ? "No active appointment with this patient — EHR access requires a confirmed or completed appointment." : (err.message || "Failed to load EHR."));
     } finally {
       setEhrLoading(false);
     }
   };
 
   const ENTRY_ICON = { CONSULTATION:"🩺", DIAGNOSIS:"🔬", LAB_REPORT:"📋", PRESCRIPTION:"💊", VACCINATION:"💉", GENERAL_NOTE:"📝" };
+
+  const renderContent = (entry) => {
+    if (entry.type === "PRESCRIPTION") {
+      try {
+        const data = JSON.parse(entry.content);
+        return (
+          <div>
+            {data.diagnosis && <div style={{fontWeight:600,marginBottom:"0.2rem"}}>Diagnosis: {data.diagnosis}</div>}
+            {Array.isArray(data.medications) && (
+              <ul style={{paddingLeft:"1rem",lineHeight:1.8,margin:"0.2rem 0"}}>
+                {data.medications.map((m, i) => (
+                  <li key={i}>{m.name} {m.dosage} — {m.frequency}, {m.duration}
+                    {m.instructions && <span style={{color:"#64748b"}}> ({m.instructions})</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {data.notes && <div style={{color:"#64748b"}}>Note: {data.notes}</div>}
+          </div>
+        );
+      } catch { /* fall through */ }
+    }
+    return <span>{entry.content}</span>;
+  };
 
   return (
     <div className="page-content">
@@ -290,6 +320,10 @@ function PatientsTab({ user, t }) {
             <div style={{ marginBottom:"0.75rem", paddingLeft:"0.5rem" }}>
               {ehrLoading ? (
                 <div style={{ fontSize:"0.78rem", color:"#94a3b8", padding:"0.5rem" }}>⏳ Loading EHR…</div>
+              ) : ehrError ? (
+                <div style={{ fontSize:"0.78rem", color:"#b91c1c", padding:"0.5rem", background:"#fef2f2", borderRadius:"0.4rem" }}>
+                  🔒 {ehrError}
+                </div>
               ) : !patientEHR || patientEHR.entries.length === 0 ? (
                 <div style={{ fontSize:"0.78rem", color:"#94a3b8", padding:"0.5rem" }}>{t.noRecordsYet}</div>
               ) : patientEHR.entries.slice(-5).reverse().map(e => (
@@ -299,7 +333,7 @@ function PatientsTab({ user, t }) {
                     <span style={{ fontWeight:600 }}>{e.title}</span>
                     <span style={{ fontSize:"0.68rem", color:"#64748b", marginLeft:"auto" }}>{new Date(e.date).toLocaleDateString("en-IN")}</span>
                   </div>
-                  <div style={{ color:"#374151", lineHeight:1.5 }}>{e.content}</div>
+                  <div style={{ color:"#374151", lineHeight:1.5 }}>{renderContent(e)}</div>
                 </div>
               ))}
             </div>
@@ -388,9 +422,18 @@ function AvailabilityTab({ user, t }) {
 function PrescriptionsTab({ user, t }) {
   const [appointments, setAppointments] = useState([]);
   const [patientId, setPatientId] = useState("");
-  const [meds, setMeds] = useState([{ name:"", dosage:"", frequency:"", duration:"" }]);
+  const [apptId, setApptId] = useState("");
+  const [meds, setMeds] = useState([{ name:"", dosage:"", frequency:"", duration:"", instructions:"", quantity:"" }]);
+  const [diagnosis, setDiagnosis] = useState("");
   const [notes, setNotes] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [validDays, setValidDays] = useState(30);
+  const [refillsAllowed, setRefillsAllowed] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(null);
+  const [error, setError] = useState("");
+  const [issued, setIssued] = useState([]);
+  const [loadingIssued, setLoadingIssued] = useState(false);
+  const [updatingId, setUpdatingId] = useState("");
 
   useEffect(() => {
     apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
@@ -405,36 +448,85 @@ function PrescriptionsTab({ user, t }) {
     return acc;
   }, []);
 
-  const addMed = () => setMeds([...meds, { name:"", dosage:"", frequency:"", duration:"" }]);
-  const updMed = (i,f,v) => { const u=[...meds]; u[i][f]=v; setMeds(u); };
-  const remMed = i => setMeds(meds.filter((_,idx)=>idx!==i));
-  const handleSave = () => {
-    if (!patientId || !meds[0].name.trim()) return;
-    const p = myPatients.find(p => p._id === patientId);
-    savePrescription({ id:genId(), patientId, patientName:p?.name||"", doctorId:user.id, doctorName:user.name, medications:meds.filter(m=>m.name.trim()), notes:notes.trim(), date:new Date().toLocaleDateString("en-IN") });
-    setSaved(true);
-  };
-  const myRx = getPrescriptionsForDoctor(user.id);
-
-  if (saved) return (
-    <div className="page-content">
-      <div className="success-screen">
-        <div className="success-icon">✓</div>
-        <div className="success-title">{t.prescriptionIssued}</div>
-        <div className="success-sub">{t.prescriptionSaved}</div>
-        <button className="btn btn-primary btn-full mt-4"
-          onClick={() => { setSaved(false); setMeds([{name:"",dosage:"",frequency:"",duration:""}]); setNotes(""); setPatientId(""); }}>
-          {t.writeAnother}
-        </button>
-      </div>
-    </div>
+  const patientAppts = appointments.filter(a =>
+    a.patient?._id === patientId &&
+    ["CONFIRMED","IN_PROGRESS","COMPLETED"].includes(a.status)
   );
+
+  const loadIssued = useCallback(async (pid) => {
+    if (!pid) return;
+    setLoadingIssued(true);
+    try {
+      const data = await apiGetPatientPrescriptions(pid);
+      setIssued(data.prescriptions || []);
+    } catch { setIssued([]); }
+    finally { setLoadingIssued(false); }
+  }, []);
+
+  const handlePatientChange = (pid) => {
+    setPatientId(pid); setApptId(""); setError(""); setSaved(null);
+    loadIssued(pid);
+  };
+
+  const addMed = () => setMeds([...meds, { name:"", dosage:"", frequency:"", duration:"", instructions:"", quantity:"" }]);
+  const remMed = i => setMeds(meds.filter((_,idx) => idx !== i));
+  const updMed = (i, f, v) => { const u = [...meds]; u[i][f] = v; setMeds(u); };
+
+  const handleIssue = async () => {
+    if (!patientId || !diagnosis.trim() || !meds[0].name.trim()) {
+      setError("Patient, diagnosis and at least one medication are required."); return;
+    }
+    setSaving(true); setError("");
+    try {
+      const data = await apiIssuePrescription({
+        patientId,
+        appointmentId: apptId || undefined,
+        medications: meds.filter(m => m.name.trim()).map(m => ({
+          name: m.name.trim(), dosage: m.dosage.trim(),
+          frequency: m.frequency.trim(), duration: m.duration.trim(),
+          instructions: m.instructions.trim() || undefined,
+          quantity: m.quantity ? Number(m.quantity) : undefined,
+        })),
+        diagnosis: diagnosis.trim(),
+        notes: notes.trim() || undefined,
+        validDays: Number(validDays),
+        refillsAllowed: Number(refillsAllowed),
+      });
+      setSaved(data.prescription);
+      setMeds([{ name:"", dosage:"", frequency:"", duration:"", instructions:"", quantity:"" }]);
+      setDiagnosis(""); setNotes(""); setApptId("");
+      loadIssued(patientId);
+    } catch (err) {
+      setError(err.message || "Failed to issue prescription.");
+    } finally { setSaving(false); }
+  };
+
+  const handleUpdateStatus = async (id, status) => {
+    setUpdatingId(id);
+    try {
+      await apiUpdatePrescriptionStatus(id, status);
+      setIssued(prev => prev.map(p => p._id === id ? { ...p, status } : p));
+    } catch (err) { setError(err.message || "Failed to update status."); }
+    finally { setUpdatingId(""); }
+  };
+
+  const STATUS_BADGE = { ACTIVE:"badge-green", COMPLETED:"badge-gray", CANCELLED:"badge-red" };
+
   return (
     <div className="page-content">
       <div className="page-header">
         <div className="page-title">{t.writePrescriptionTitle}</div>
       </div>
-      {myPatients.length===0 ? (
+      {error && <div className="alert alert-danger">{error}</div>}
+      {saved && (
+        <div className="alert alert-success" style={{ marginBottom:"0.75rem" }}>
+          ✅ Prescription issued for <strong>{saved.patient?.name}</strong>
+          <button className="btn btn-ghost btn-sm" style={{ marginLeft:"0.5rem" }}
+            onClick={() => setSaved(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {myPatients.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">💊</div>
           <div className="empty-state-text">{t.noPatientsYet}</div>
@@ -444,59 +536,138 @@ function PrescriptionsTab({ user, t }) {
         <div className="card">
           <div className="form-group">
             <label className="form-label">{t.selectPatient} *</label>
-            <select className="form-select" value={patientId} onChange={e => setPatientId(e.target.value)}>
+            <select className="form-select" value={patientId} onChange={e => handlePatientChange(e.target.value)}>
               <option value="">{t.selectPatient}</option>
               {myPatients.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
             </select>
           </div>
+
+          {patientId && patientAppts.length > 0 && (
+            <div className="form-group">
+              <label className="form-label">Link to Appointment (optional)</label>
+              <select className="form-select" value={apptId} onChange={e => setApptId(e.target.value)}>
+                <option value="">None</option>
+                {patientAppts.map(a => (
+                  <option key={a._id} value={a._id}>
+                    {new Date(a.date).toLocaleDateString("en-IN")} {a.startTime} — {a.status}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label">Diagnosis *</label>
+            <input className="form-input" placeholder="e.g. Hypertension Stage 1"
+              value={diagnosis} onChange={e => setDiagnosis(e.target.value)} />
+          </div>
+
           <div className="sep" />
           <div style={{ fontWeight:700, fontSize:"0.85rem", marginBottom:"0.6rem" }}>{t.medications}</div>
-          {meds.map((m,i) => (
+          {meds.map((m, i) => (
             <div key={i} style={{ background:"#f8fafc", borderRadius:"0.6rem", padding:"0.8rem", marginBottom:"0.5rem" }}>
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.4rem" }}>
                 <span style={{ fontSize:"0.72rem", fontWeight:700, color:"#64748b" }}>{t.medicine} {i+1}</span>
-                {meds.length>1 && <button style={{ background:"none", border:"none", color:"#b91c1c", cursor:"pointer", fontSize:"0.8rem" }} onClick={() => remMed(i)}>✕</button>}
+                {meds.length > 1 && <button style={{ background:"none", border:"none", color:"#b91c1c", cursor:"pointer", fontSize:"0.8rem" }} onClick={() => remMed(i)}>✕</button>}
               </div>
               <div className="form-grid-2">
                 <div className="form-group" style={{ marginBottom:"0.4rem" }}>
-                  <label className="form-label">{t.medicineName}</label>
-                  <input className="form-input" placeholder="Paracetamol" value={m.name} onChange={e => updMed(i,"name",e.target.value)} />
+                  <label className="form-label">{t.medicineName} *</label>
+                  <input className="form-input" placeholder="Amlodipine" value={m.name} onChange={e => updMed(i,"name",e.target.value)} />
                 </div>
                 <div className="form-group" style={{ marginBottom:"0.4rem" }}>
-                  <label className="form-label">{t.dosage}</label>
-                  <input className="form-input" placeholder="500mg" value={m.dosage} onChange={e => updMed(i,"dosage",e.target.value)} />
+                  <label className="form-label">{t.dosage} *</label>
+                  <input className="form-input" placeholder="5mg" value={m.dosage} onChange={e => updMed(i,"dosage",e.target.value)} />
+                </div>
+                <div className="form-group" style={{ marginBottom:"0.4rem" }}>
+                  <label className="form-label">{t.frequency} *</label>
+                  <input className="form-input" placeholder="Once daily" value={m.frequency} onChange={e => updMed(i,"frequency",e.target.value)} />
+                </div>
+                <div className="form-group" style={{ marginBottom:"0.4rem" }}>
+                  <label className="form-label">{t.duration} *</label>
+                  <input className="form-input" placeholder="30 days" value={m.duration} onChange={e => updMed(i,"duration",e.target.value)} />
                 </div>
                 <div className="form-group" style={{ marginBottom:0 }}>
-                  <label className="form-label">{t.frequency}</label>
-                  <input className="form-input" placeholder="Twice daily" value={m.frequency} onChange={e => updMed(i,"frequency",e.target.value)} />
+                  <label className="form-label">Instructions</label>
+                  <input className="form-input" placeholder="After meals" value={m.instructions} onChange={e => updMed(i,"instructions",e.target.value)} />
                 </div>
                 <div className="form-group" style={{ marginBottom:0 }}>
-                  <label className="form-label">{t.duration}</label>
-                  <input className="form-input" placeholder="5 days" value={m.duration} onChange={e => updMed(i,"duration",e.target.value)} />
+                  <label className="form-label">Qty (tablets)</label>
+                  <input className="form-input" type="number" placeholder="30" value={m.quantity} onChange={e => updMed(i,"quantity",e.target.value)} />
                 </div>
               </div>
             </div>
           ))}
           <button className="btn btn-ghost btn-sm mb-3" onClick={addMed}>{t.addMedicine}</button>
+
+          <div className="form-grid-2">
+            <div className="form-group">
+              <label className="form-label">Valid (days)</label>
+              <input className="form-input" type="number" value={validDays} onChange={e => setValidDays(e.target.value)} min="1" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Refills allowed</label>
+              <input className="form-input" type="number" value={refillsAllowed} onChange={e => setRefillsAllowed(e.target.value)} min="0" />
+            </div>
+          </div>
+
           <div className="form-group">
             <label className="form-label">{t.additionalNotes}</label>
-            <textarea className="form-textarea" placeholder={t.additionalNotesPlaceholder} value={notes} onChange={e => setNotes(e.target.value)} />
+            <textarea className="form-textarea" placeholder={t.additionalNotesPlaceholder}
+              value={notes} onChange={e => setNotes(e.target.value)} />
           </div>
-          <button className="btn btn-success btn-full" onClick={handleSave} disabled={!patientId||!meds[0].name.trim()}>
-            {t.issuePrescription}
+
+          <button className="btn btn-success btn-full" onClick={handleIssue}
+            disabled={saving || !patientId || !diagnosis.trim() || !meds[0].name.trim()}>
+            {saving ? "⏳ Issuing…" : t.issuePrescription}
           </button>
         </div>
       )}
-      {myRx.length>0 && (
+
+      {/* Issued prescriptions for selected patient */}
+      {patientId && (
         <>
           <div className="section-header mt-4"><div className="section-title">{t.issuedPrescriptions}</div></div>
-          {[...myRx].reverse().map(p => (
-            <div className="card" key={p.id} style={{ marginBottom:"0.5rem" }}>
-              <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.88rem" }}>{p.patientName}</div>
-              <div style={{ fontSize:"0.72rem", color:"#64748b", marginBottom:"0.4rem" }}>{p.date}</div>
-              <ul style={{ paddingLeft:"1rem", fontSize:"0.8rem", color:"#374151", lineHeight:1.9 }}>
-                {p.medications.map((m,i) => <li key={i}>{m.name} {m.dosage} — {m.frequency}</li>)}
+          {loadingIssued ? (
+            <div className="empty-state"><div style={{fontSize:"1.5rem"}}>⏳</div></div>
+          ) : issued.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">💊</div>
+              <div className="empty-state-text">No prescriptions issued yet</div>
+            </div>
+          ) : issued.map(p => (
+            <div className="card" key={p._id} style={{ marginBottom:"0.5rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:"0.4rem" }}>
+                <div>
+                  <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.88rem" }}>{p.diagnosis}</div>
+                  <div style={{ fontSize:"0.7rem", color:"#64748b" }}>
+                    {new Date(p.issuedAt).toLocaleDateString("en-IN")} · Valid until {new Date(p.validUntil).toLocaleDateString("en-IN")}
+                  </div>
+                  <div style={{ fontSize:"0.7rem", color:"#64748b" }}>
+                    Refills: {p.refillsUsed}/{p.refillsAllowed}
+                  </div>
+                </div>
+                <span className={`badge ${STATUS_BADGE[p.status] || "badge-gray"}`}>{p.status}</span>
+              </div>
+              <ul style={{ paddingLeft:"1rem", fontSize:"0.78rem", color:"#374151", lineHeight:1.9, marginBottom:"0.5rem" }}>
+                {p.medications.map((m, i) => (
+                  <li key={i}>{m.name} {m.dosage} — {m.frequency}, {m.duration}</li>
+                ))}
               </ul>
+              {p.status === "ACTIVE" && (
+                <div style={{ display:"flex", gap:"0.4rem" }}>
+                  <button className="btn btn-ghost btn-sm"
+                    disabled={updatingId === p._id}
+                    onClick={() => handleUpdateStatus(p._id, "COMPLETED")}>
+                    Mark Completed
+                  </button>
+                  <button className="btn btn-ghost btn-sm" style={{ color:"#b91c1c" }}
+                    disabled={updatingId === p._id}
+                    onClick={() => handleUpdateStatus(p._id, "CANCELLED")}>
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </>

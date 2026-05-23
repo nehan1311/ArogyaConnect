@@ -486,7 +486,39 @@ export const translations = {
   },
 };
 
+// Indian languages for the Language dropdown.
+// NOTE: Only `en` and `hi` currently have translation objects in `translations`.
+// For other languages, the UI will fall back to English until translations are added.
 export const LANGUAGES = [
   { code: "en", label: "English" },
+
+  // Officially recognized/commonly used Indian languages
   { code: "hi", label: "हिंदी" },
+  { code: "bn", label: "বাংলা" },
+  { code: "te", label: "తెలుగు" },
+  { code: "mr", label: "मराठी" },
+  { code: "ta", label: "தமிழ்" },
+  { code: "ur", label: "اردو" },
+  { code: "gu", label: "ગુજરાતી" },
+  { code: "kn", label: "ಕನ್ನಡ" },
+  { code: "ml", label: "മലയാളം" },
+
+  // Other major Indian languages
+  { code: "or", label: "ଓଡ଼ିଆ" },
+  { code: "pa", label: "ਪੰਜਾਬੀ" },
+  { code: "as", label: "অসমীয়া" },
+  { code: "sa", label: "संस्कृत" },
+  { code: "bh", label: "भोजपुरी" },
+  { code: "mai", label: "मैथिली" },
+  { code: "sat", label: "सन्थाली" },
+  { code: "ne", label: "नेपाली" },
+  { code: "ks", label: "कश्मीरी" },
+  { code: "sd", label: "सिंधी" },
+  { code: "mni", label: "মৈতেই" },
+  { code: "kok", label: "कोंकणी" },
+  { code: "doi", label: "डोगरी" },
+  { code: "bho", label: "भोजपुरी" },
+
+  // Add more codes here as you add `translations[code]` objects.
 ];
+
