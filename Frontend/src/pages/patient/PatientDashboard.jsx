@@ -5,6 +5,7 @@ import { LANGUAGES } from "../../i18n";
 import {
   apiSearchDoctors, apiGetDoctorSlots, apiBookAppointment,
   apiGetMyAppointments, apiCancelAppointment, apiGetMyNotifications,
+  apiGetMyEHR, apiGenerateShareToken, apiRevokeShareToken, apiGetEHRAuditLogs,
 } from "../../api";
 import {
   getEHRForPatient, getPrescriptionsForPatient, getTriageForPatient,
@@ -512,23 +513,76 @@ function AppointmentsTab({ user, t }) {
 
 function RecordsTab({ user, t }) {
   const [view, setView] = useState("ehr");
-  const [reportName, setReportName] = useState("");
-  const [file, setFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadDone, setUploadDone] = useState(false);
-  const ehr = getEHRForPatient(user.id);
-  const rx = getPrescriptionsForPatient(user.id);
-  const reports = getReportsForPatient(user.id);
+  const [ehr, setEhr] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const handleUpload = () => {
-    if (!file || !reportName.trim()) return;
-    setUploading(true);
-    setTimeout(() => {
-      saveReport({ id:genId(), patientId:user.id, name:reportName.trim(), fileName:file.name, fileType:file.type, size:file.size, uploadedAt:new Date().toLocaleString("en-IN") });
-      setReportName(""); setFile(null); setUploading(false); setUploadDone(true);
-      setTimeout(() => setUploadDone(false), 2500);
-    }, 1000);
+  // Share token state
+  const [doctors, setDoctors] = useState([]);
+  const [shareDocId, setShareDocId] = useState("");
+  const [shareHours, setShareHours] = useState(48);
+  const [sharing, setSharing] = useState(false);
+  const [sharedToken, setSharedToken] = useState("");
+  const [revoking, setRevoking] = useState("");
+
+  // Audit log state
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  const loadEHR = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const data = await apiGetMyEHR();
+      setEhr(data.ehr);
+    } catch (err) {
+      setError(err.message || "Failed to load health records.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadEHR(); }, [loadEHR]);
+
+  useEffect(() => {
+    if (view === "share") {
+      apiSearchDoctors().then(d => setDoctors(d.doctors || [])).catch(() => {});
+    }
+    if (view === "audit") {
+      setAuditLoading(true);
+      apiGetEHRAuditLogs(user.id)
+        .then(d => setAuditLogs(d.logs || []))
+        .catch(() => {})
+        .finally(() => setAuditLoading(false));
+    }
+  }, [view, user.id]);
+
+  const handleShare = async () => {
+    if (!shareDocId) return;
+    setSharing(true); setSharedToken("");
+    try {
+      const data = await apiGenerateShareToken(shareDocId, shareHours);
+      setSharedToken(data.shareToken);
+      await loadEHR();
+    } catch (err) {
+      setError(err.message || "Failed to generate share token.");
+    } finally {
+      setSharing(false);
+    }
   };
+
+  const handleRevoke = async (tokenId) => {
+    setRevoking(tokenId);
+    try {
+      await apiRevokeShareToken(tokenId);
+      await loadEHR();
+    } catch (err) {
+      setError(err.message || "Failed to revoke token.");
+    } finally {
+      setRevoking("");
+    }
+  };
+
+  const ENTRY_ICON = { CONSULTATION:"🩺", DIAGNOSIS:"🔬", LAB_REPORT:"📋", PRESCRIPTION:"💊", VACCINATION:"💉", GENERAL_NOTE:"📝" };
 
   return (
     <div className="page-content">
@@ -536,80 +590,129 @@ function RecordsTab({ user, t }) {
         <div className="page-title">{t.healthRecordsTitle}</div>
       </div>
       <div className="tab-bar">
-        {[["ehr",t.ehrRecords],["rx",t.prescriptions],["upload",t.uploadReports]].map(([id,label]) => (
+        {[["ehr","EHR"],["share","🔗 Share"],["audit","🔍 Audit"]].map(([id,label]) => (
           <button key={id} className={`tab-btn ${view===id?"active":""}`} onClick={() => setView(id)}>{label}</button>
         ))}
       </div>
 
-      {view==="ehr" && (ehr.length===0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">📁</div>
-          <div className="empty-state-text">{t.noHealthRecords}</div>
-          <div className="empty-state-sub">{t.recordsAppearAfterConsultation}</div>
-        </div>
-      ) : [...ehr].reverse().map(r => (
-        <div className="card" key={r.id} style={{ marginBottom:"0.5rem" }}>
-          <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.9rem" }}>{r.diagnosis}</div>
-          <div style={{ fontSize:"0.72rem", color:"#64748b", margin:"0.2rem 0 0.5rem" }}>{r.doctorName} · {r.date}</div>
-          <div style={{ fontSize:"0.82rem", color:"#374151", lineHeight:1.6 }}>{r.notes}</div>
-        </div>
-      )))}
+      {error && <div className="alert alert-danger">{error}</div>}
 
-      {view==="rx" && (rx.length===0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">💊</div>
-          <div className="empty-state-text">{t.noPrescriptions}</div>
-          <div className="empty-state-sub">{t.prescriptionsAppearAfterConsultation}</div>
-        </div>
-      ) : [...rx].reverse().map(p => (
-        <div className="card" key={p.id} style={{ marginBottom:"0.5rem" }}>
-          <div style={{ fontWeight:700, color:"#1e293b", fontSize:"0.9rem" }}>Prescription</div>
-          <div style={{ fontSize:"0.72rem", color:"#64748b", margin:"0.2rem 0 0.5rem" }}>{p.doctorName} · {p.date}</div>
-          <ul style={{ paddingLeft:"1rem", fontSize:"0.82rem", color:"#374151", lineHeight:2 }}>
-            {p.medications.map((m,i) => <li key={i}>{m.name} {m.dosage} — {m.frequency}, {m.duration}</li>)}
-          </ul>
-          {p.notes && <div style={{ fontSize:"0.78rem", color:"#64748b", marginTop:"0.4rem" }}>{p.notes}</div>}
-        </div>
-      )))}
+      {/* ── EHR Entries ── */}
+      {view==="ehr" && (
+        loading ? <div className="empty-state"><div style={{fontSize:"1.5rem"}}>⏳</div></div>
+        : !ehr || ehr.entries.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">📁</div>
+            <div className="empty-state-text">{t.noHealthRecords}</div>
+            <div className="empty-state-sub">{t.recordsAppearAfterConsultation}</div>
+          </div>
+        ) : (
+          <>
+            {ehr.bloodGroup && ehr.bloodGroup !== "UNKNOWN" && (
+              <div className="card" style={{ marginBottom:"0.6rem", display:"flex", gap:"1rem" }}>
+                <div><div style={{fontSize:"0.68rem",color:"#94a3b8",fontWeight:700,textTransform:"uppercase"}}>Blood Group</div>
+                  <div style={{fontWeight:800,fontSize:"1.1rem",color:"#b91c1c"}}>{ehr.bloodGroup}</div></div>
+                {ehr.allergies?.length > 0 && <div><div style={{fontSize:"0.68rem",color:"#94a3b8",fontWeight:700,textTransform:"uppercase"}}>Allergies</div>
+                  <div style={{fontSize:"0.82rem",color:"#374151"}}>{ehr.allergies.join(", ")}</div></div>}
+              </div>
+            )}
+            {[...ehr.entries].reverse().map(e => (
+              <div className="card" key={e._id} style={{ marginBottom:"0.5rem" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:"0.5rem", marginBottom:"0.4rem" }}>
+                  <span style={{fontSize:"1.1rem"}}>{ENTRY_ICON[e.type]||"📄"}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,color:"#1e293b",fontSize:"0.9rem"}}>{e.title}</div>
+                    <div style={{fontSize:"0.7rem",color:"#64748b"}}>{e.doctorName} · {new Date(e.date).toLocaleDateString("en-IN")}</div>
+                  </div>
+                  <span className="badge badge-blue" style={{fontSize:"0.62rem"}}>{e.type.replace("_"," ")}</span>
+                </div>
+                <div style={{fontSize:"0.82rem",color:"#374151",lineHeight:1.6,background:"#f8fafc",borderRadius:"0.5rem",padding:"0.6rem"}}>
+                  {e.content}
+                </div>
+              </div>
+            ))}
+          </>
+        )
+      )}
 
-      {view==="upload" && (
+      {/* ── Share Token Management ── */}
+      {view==="share" && (
         <>
-          <div className="card" style={{ marginBottom:"0.75rem" }}>
-            <div style={{ fontWeight:700, fontSize:"0.9rem", color:"#1e293b", marginBottom:"0.75rem" }}>{t.uploadMedicalReport}</div>
-            <div style={{ fontSize:"0.78rem", color:"#64748b", marginBottom:"0.75rem" }}>{t.uploadDesc}</div>
-            <div className="form-group">
-              <label className="form-label">{t.reportName}</label>
-              <input className="form-input" placeholder={t.reportNamePlaceholder} value={reportName} onChange={e => setReportName(e.target.value)} />
+          <div className="card" style={{marginBottom:"0.75rem"}}>
+            <div style={{fontWeight:700,fontSize:"0.9rem",color:"#1e293b",marginBottom:"0.75rem"}}>🔗 Share EHR with a Doctor</div>
+            <div className="alert alert-info" style={{fontSize:"0.75rem",marginBottom:"0.75rem"}}>
+              Generate a one-time token to grant a doctor temporary read access to your EHR.
             </div>
-            <label className="upload-area" style={{ display:"block" }}>
-              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" onChange={e => setFile(e.target.files[0])} />
-              <div className="upload-icon">📎</div>
-              <div className="upload-text">{file ? file.name : t.selectFile}</div>
-              <div className="upload-hint">PDF, JPG, PNG, DOC — max 10 MB</div>
-            </label>
-            {uploadDone && <div className="alert alert-success mt-3">{t.reportUploaded}</div>}
-            <button className="btn btn-primary btn-full mt-3" onClick={handleUpload}
-              disabled={uploading || !file || !reportName.trim()}>
-              {uploading ? t.uploading : t.uploadReport}
+            <div className="form-group">
+              <label className="form-label">Select Doctor *</label>
+              <select className="form-select" value={shareDocId} onChange={e => setShareDocId(e.target.value)}>
+                <option value="">Choose a doctor…</option>
+                {doctors.map(d => <option key={d.id} value={d.id}>{d.name} — {d.profile?.specialization}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Expires in (hours)</label>
+              <select className="form-select" value={shareHours} onChange={e => setShareHours(Number(e.target.value))}>
+                {[6,12,24,48,72].map(h => <option key={h} value={h}>{h} hours</option>)}
+              </select>
+            </div>
+            {sharedToken && (
+              <div className="alert alert-success" style={{marginBottom:"0.75rem"}}>
+                <div style={{fontWeight:700,marginBottom:"0.3rem"}}>✅ Token generated — share this once only:</div>
+                <div style={{fontFamily:"monospace",fontSize:"0.72rem",wordBreak:"break-all",background:"#f0fdf4",padding:"0.5rem",borderRadius:"0.4rem"}}>{sharedToken}</div>
+              </div>
+            )}
+            <button className="btn btn-primary btn-full" onClick={handleShare} disabled={sharing || !shareDocId}>
+              {sharing ? "⏳ Generating…" : "Generate Share Token"}
             </button>
           </div>
-          <div className="section-header"><div className="section-title">{t.myReports}</div></div>
-          {reports.length===0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">📎</div>
-              <div className="empty-state-text">{t.noReportsYet}</div>
-            </div>
-          ) : [...reports].reverse().map(r => (
-            <div className="report-item" key={r.id}>
-              <div className="report-icon">📄</div>
-              <div className="report-body">
-                <div className="report-name">{r.name}</div>
-                <div className="report-meta">{r.fileName} · {t.uploadedOn} {r.uploadedAt}</div>
-              </div>
-              <span className="badge badge-blue">{t.viewReport}</span>
-            </div>
-          ))}
+
+          {/* Active tokens */}
+          {ehr?.shareTokens?.filter(tk => !tk.isRevoked && new Date(tk.expiresAt) > new Date()).length > 0 && (
+            <>
+              <div className="section-header"><div className="section-title">Active Tokens</div></div>
+              {ehr.shareTokens.filter(tk => !tk.isRevoked && new Date(tk.expiresAt) > new Date()).map(tk => (
+                <div className="card" key={tk._id} style={{marginBottom:"0.5rem",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontSize:"0.82rem",fontWeight:600,color:"#1e293b"}}>Expires {new Date(tk.expiresAt).toLocaleString("en-IN")}</div>
+                    {tk.accessedAt && <div style={{fontSize:"0.7rem",color:"#64748b"}}>Last accessed {new Date(tk.accessedAt).toLocaleString("en-IN")}</div>}
+                  </div>
+                  <button className="btn btn-danger btn-sm" disabled={revoking===tk._id}
+                    onClick={() => handleRevoke(tk._id)}>
+                    {revoking===tk._id ? "⏳" : "Revoke"}
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
         </>
+      )}
+
+      {/* ── Audit Log ── */}
+      {view==="audit" && (
+        auditLoading ? <div className="empty-state"><div style={{fontSize:"1.5rem"}}>⏳</div></div>
+        : auditLogs.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">🔍</div>
+            <div className="empty-state-text">No audit events yet</div>
+          </div>
+        ) : auditLogs.map(log => (
+          <div className="card" key={log._id} style={{marginBottom:"0.4rem"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <span className={`badge ${log.action.includes("VIEW")?"badge-blue":log.action.includes("SHARE")?"badge-purple":"badge-green"}`}>
+                  {log.action}
+                </span>
+                <div style={{fontSize:"0.75rem",color:"#64748b",marginTop:"0.2rem"}}>
+                  {log.actorRole} · {log.ipAddress || "—"}
+                </div>
+              </div>
+              <div style={{fontSize:"0.68rem",color:"#94a3b8",flexShrink:0,marginLeft:"0.5rem"}}>
+                {new Date(log.createdAt).toLocaleString("en-IN")}
+              </div>
+            </div>
+          </div>
+        ))
       )}
     </div>
   );

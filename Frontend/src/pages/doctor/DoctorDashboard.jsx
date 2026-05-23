@@ -4,7 +4,7 @@ import { useAuth, useLang } from "../../App";
 import { LANGUAGES } from "../../i18n";
 import {
   apiGetMyAppointments, apiUpdateConsultationNotes, apiSetDoctorAvailability,
-  apiGetMyNotifications,
+  apiGetMyNotifications, apiAddEHREntry, apiGetPatientEHR,
 } from "../../api";
 import {
   savePrescription, getPrescriptionsForDoctor, genId,
@@ -146,6 +146,13 @@ function AppointmentsTab({ user, t }) {
     setSaving(true);
     try {
       await apiUpdateConsultationNotes(active._id, notes.trim());
+      // Also save to patient EHR
+      await apiAddEHREntry(active.patient._id, {
+        type: "CONSULTATION",
+        title: "Consultation Notes",
+        content: notes.trim(),
+        appointmentId: active._id,
+      });
       await load();
     } catch {}
     finally { setSaving(false); setActive(null); setNotes(""); }
@@ -217,6 +224,9 @@ function AppointmentsTab({ user, t }) {
 function PatientsTab({ user, t }) {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [patientEHR, setPatientEHR] = useState(null);
+  const [ehrLoading, setEhrLoading] = useState(false);
 
   useEffect(() => {
     apiGetMyAppointments().then(d => setAppointments(d.appointments || [])).catch(() => {});
@@ -232,6 +242,22 @@ function PatientsTab({ user, t }) {
     return acc;
   }, []);
 
+  const handleViewEHR = async (p) => {
+    if (selectedPatient?._id === p._id) { setSelectedPatient(null); setPatientEHR(null); return; }
+    setSelectedPatient(p);
+    setEhrLoading(true);
+    try {
+      const data = await apiGetPatientEHR(p._id);
+      setPatientEHR(data.ehr);
+    } catch {
+      setPatientEHR(null);
+    } finally {
+      setEhrLoading(false);
+    }
+  };
+
+  const ENTRY_ICON = { CONSULTATION:"🩺", DIAGNOSIS:"🔬", LAB_REPORT:"📋", PRESCRIPTION:"💊", VACCINATION:"💉", GENERAL_NOTE:"📝" };
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -245,14 +271,38 @@ function PatientsTab({ user, t }) {
           <div className="empty-state-text">{t.noPatientsYet}</div>
         </div>
       ) : myPatients.map(p => (
-        <div className="card" key={p._id} style={{ marginBottom:"0.5rem" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:"0.7rem" }}>
-            <div className="list-avatar list-avatar-green">{p.name[0]}</div>
-            <div className="list-body">
-              <div className="list-title">{p.name}</div>
-              <div className="list-sub">{p.email}</div>
+        <div key={p._id}>
+          <div className="card" style={{ marginBottom:"0.5rem", cursor:"pointer" }}
+            onClick={() => handleViewEHR(p)}>
+            <div style={{ display:"flex", alignItems:"center", gap:"0.7rem" }}>
+              <div className="list-avatar list-avatar-green">{p.name[0]}</div>
+              <div className="list-body">
+                <div className="list-title">{p.name}</div>
+                <div className="list-sub">{p.email}</div>
+              </div>
+              <span style={{ color:"#94a3b8", fontSize:"0.8rem" }}>
+                {selectedPatient?._id === p._id ? "▲" : "▼"}
+              </span>
             </div>
           </div>
+          {selectedPatient?._id === p._id && (
+            <div style={{ marginBottom:"0.75rem", paddingLeft:"0.5rem" }}>
+              {ehrLoading ? (
+                <div style={{ fontSize:"0.78rem", color:"#94a3b8", padding:"0.5rem" }}>⏳ Loading EHR…</div>
+              ) : !patientEHR || patientEHR.entries.length === 0 ? (
+                <div style={{ fontSize:"0.78rem", color:"#94a3b8", padding:"0.5rem" }}>{t.noRecordsYet}</div>
+              ) : patientEHR.entries.slice(-5).reverse().map(e => (
+                <div key={e._id} style={{ background:"#f8fafc", borderRadius:"0.5rem", padding:"0.6rem", marginBottom:"0.4rem", fontSize:"0.8rem" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:"0.4rem", marginBottom:"0.2rem" }}>
+                    <span>{ENTRY_ICON[e.type]||"📄"}</span>
+                    <span style={{ fontWeight:600 }}>{e.title}</span>
+                    <span style={{ fontSize:"0.68rem", color:"#64748b", marginLeft:"auto" }}>{new Date(e.date).toLocaleDateString("en-IN")}</span>
+                  </div>
+                  <div style={{ color:"#374151", lineHeight:1.5 }}>{e.content}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
